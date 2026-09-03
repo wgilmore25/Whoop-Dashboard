@@ -36,6 +36,8 @@ export interface RecommendationExplanation {
 
 export type HrvTrend = "rising" | "falling" | "flat";
 export type MetricConfidence = "high" | "moderate" | "insufficient";
+export type LoadMethod = "power_kj" | "power_estimate" | "hr_proxy" | "duration_proxy" | "mixed";
+export type LoadStatus = "stable" | "rising" | "unusually_high" | "insufficient_history";
 
 export interface DailyMetrics {
   id?: string;
@@ -50,6 +52,10 @@ export interface DailyMetrics {
   load_3d: number | null;
   load_7d: number | null;
   load_28d: number | null;
+  load_method: LoadMethod | null;
+  load_confidence: MetricConfidence | null;
+  load_status: LoadStatus | null;
+  load_7d_vs_baseline_pct: number | null;
   acwr: number | null;
   hrv_trend: HrvTrend | null;
   hrv_cv_7d: number | null;
@@ -196,4 +202,18 @@ export interface UserSettings {
   training_mode: TrainingMode;
   hiit_threshold_hr: number;
   long_session_minutes: number;
+}
+
+export interface MorningCheckIn {
+  user_id: string;
+  date: string;
+  fatigue: number | null;
+  soreness: number | null;
+  stress: number | null;
+  motivation: number | null;
+  illness_symptoms: boolean;
+  pain_or_injury: boolean;
+  travel_or_jet_lag: boolean;
+  planned_session: SessionCategory | null;
+  notes?: string | null;
 }

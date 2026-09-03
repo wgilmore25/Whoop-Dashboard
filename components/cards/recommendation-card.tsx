@@ -12,6 +12,7 @@ export function RecommendationCard({ recommendation: rec }: Props) {
   const sessionColor = SESSION_COLORS[rec.recommended_session];
   const readinessLabel = READINESS_LABELS[rec.readiness_bucket];
   const readinessColor = READINESS_COLORS[rec.readiness_bucket];
+  const dataConfidence = rec.confidence >= 0.75 ? "high" : rec.confidence >= 0.5 ? "moderate" : "low";
 
   return (
     <Card className="border-l-4" style={{ borderLeftColor: sessionColor }}>
@@ -21,7 +22,7 @@ export function RecommendationCard({ recommendation: rec }: Props) {
             Today's Recommendation
           </CardTitle>
           <span className="text-xs text-muted-foreground">
-            {rec.rule_version} · {Math.round(rec.confidence * 100)}% confidence
+            {rec.rule_version} · {dataConfidence} data confidence
           </span>
         </div>
       </CardHeader>

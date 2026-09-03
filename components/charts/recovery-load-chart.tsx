@@ -9,6 +9,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  ReferenceLine,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { TrendPoint } from "@/lib/types";
@@ -26,7 +27,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
       {payload.map((p: any, index: number) => (
         <p key={`${p.dataKey}-${p.name}-${index}`} style={{ color: p.color }}>
           {p.name}: {p.value != null ? Math.round(p.value) : "—"}
-          {p.dataKey === "recovery_score" ? "%" : " kJ"}
+          {p.dataKey === "recovery_score" ? "%" : " load points"}
         </p>
       ))}
     </div>
@@ -34,13 +35,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function RecoveryLoadChart({ data }: Props) {
-  // Normalize load to 0-100 scale for dual-axis readability
-  const maxLoad = Math.max(...data.map((d) => d.load_3d ?? 0), 1);
-  const chartData = data.map((d) => ({
-    ...d,
-    load_3d_normalized: d.load_3d != null ? (d.load_3d / maxLoad) * 100 : null,
-  }));
-
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -50,7 +44,7 @@ export function RecoveryLoadChart({ data }: Props) {
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+          <LineChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis
               dataKey="date"
@@ -58,32 +52,34 @@ export function RecoveryLoadChart({ data }: Props) {
               tick={{ fontSize: 11 }}
               interval="preserveStartEnd"
             />
-            <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
+            <YAxis yAxisId="recovery" domain={[0, 100]} tick={{ fontSize: 11 }} />
+            <YAxis yAxisId="load" orientation="right" tick={{ fontSize: 11 }} width={42} />
+            <ReferenceLine yAxisId="recovery" y={50} stroke="#cbd5e1" strokeDasharray="3 3" />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Line
-              type="monotone"
+              type="linear"
+              yAxisId="recovery"
               dataKey="recovery_score"
               name="Recovery"
               stroke="#34d399"
               strokeWidth={2}
-              dot={false}
-              connectNulls
+              dot={{ r: 2 }}
             />
             <Line
-              type="monotone"
-              dataKey="load_3d_normalized"
-              name="3-Day Load (scaled)"
+              type="linear"
+              yAxisId="load"
+              dataKey="load_3d"
+              name="3-Day Load"
               stroke="#f59e0b"
               strokeWidth={2}
-              dot={false}
+              dot={{ r: 2 }}
               strokeDasharray="5 3"
-              connectNulls
             />
           </LineChart>
         </ResponsiveContainer>
         <p className="text-xs text-muted-foreground mt-1">
-          Load scaled to 0–100 for comparison. Actual kJ values shown in cards above.
+          Recovery uses the left axis; load uses the right axis. Lines connect daily observations only.
         </p>
       </CardContent>
     </Card>

@@ -8,6 +8,7 @@ import { RecentSessionsCard } from "@/components/cards/recent-sessions-card";
 import { RecoveryLoadChart } from "@/components/charts/recovery-load-chart";
 import { SleepRecommendationChart } from "@/components/charts/sleep-recommendation-chart";
 import { SyncStatus } from "@/components/dashboard/sync-status";
+import { MorningCheckIn } from "@/components/dashboard/morning-check-in";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/config/env";
@@ -384,6 +385,7 @@ export default async function DashboardPage() {
             <RecentSessionsCard activities={recentActivities} />
           </div>
         </div>
+        <MorningCheckIn />
 
         {/* Bottom row — charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

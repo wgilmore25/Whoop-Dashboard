@@ -1,9 +1,10 @@
 // POST /api/recommendation — compute and store recommendation for today
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { fetchRecommendation, fallbackRecommendation } from "@/lib/recommendations/client";
+import { buildRecommendation } from "@/lib/recommendations/engine";
 import { generateExplanation } from "@/lib/explanations/generator";
 import { normalizeDailyMetrics } from "@/lib/sync/normalization";
+import type { MorningCheckIn } from "@/lib/types";
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -16,10 +17,10 @@ export async function POST(request: NextRequest) {
   const serviceClient = createServiceClient();
   const today = new Date().toISOString().split("T")[0];
 
-  // Load raw data (last 30 days)
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  // Load enough history to establish a personal, not population-wide, context.
+  const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [recoveries, sleepRecords, activities, settings] = await Promise.all([
+  const [recoveries, sleepRecords, activities, settings, checkIn] = await Promise.all([
     serviceClient
       .from("whoop_recoveries")
       .select("*")
@@ -47,13 +48,20 @@ export async function POST(request: NextRequest) {
       .eq("user_id", user.id)
       .single()
       .then((r) => r.data),
+    serviceClient
+      .from("morning_checkins")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("date", today)
+      .maybeSingle()
+      .then((r) => r.data),
   ]);
 
-  // Normalize today plus the preceding 13 days so charts and history are
-  // populated immediately after the first live sync.
+  // Normalize a 28-day window. The same normalized series drives the
+  // recommendation, dashboard history, and personal baseline context.
   const now = new Date();
-  const dailyMetricsRows = Array.from({ length: 14 }, (_, index) => {
-    const daysAgo = 13 - index;
+  const dailyMetricsRows = Array.from({ length: 28 }, (_, index) => {
+    const daysAgo = 27 - index;
     const targetDate = new Date(now);
     targetDate.setUTCDate(targetDate.getUTCDate() - daysAgo);
 
@@ -83,18 +91,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Call FastAPI recommendation service (with graceful fallback)
-  let recommendation;
-  try {
-    recommendation = await fetchRecommendation({
-      user_id: user.id,
-      metrics,
-      training_mode: settings?.training_mode ?? "mixed",
-    });
-  } catch (err) {
-    console.warn("Recommendation service unavailable, using fallback:", err);
-    recommendation = fallbackRecommendation();
-  }
+  const historical = dailyMetricsRows.slice(0, -1);
+  const median = (values: number[]) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    const center = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[center] : (sorted[center - 1] + sorted[center]) / 2;
+  };
+  const baseline = {
+    valid_days: historical.filter((row) => row.recovery_score != null || row.sleep_hours != null || row.load_7d != null).length,
+    recovery_median: median(historical.map((row) => row.recovery_score).filter((value): value is number => value != null)),
+    load_7d_median: median(historical.map((row) => row.load_7d).filter((value): value is number => value != null)),
+  };
+  const recommendation = buildRecommendation({
+    metrics,
+    baseline,
+    checkIn: (checkIn as MorningCheckIn | null) ?? null,
+    trainingMode: settings?.training_mode ?? "mixed",
+  });
 
   // Upsert recommendation row
   const { data: recRow } = await serviceClient
@@ -132,5 +146,5 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ recommendation, explanation, metrics });
+  return NextResponse.json({ recommendation, explanation, metrics, baseline });
 }

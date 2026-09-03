@@ -111,6 +111,10 @@ export const mockTodayMetrics: DailyMetrics = {
   load_3d: 1758,    // kJ proxy
   load_7d: 3420,
   load_28d: 8940,
+  load_method: "mixed",
+  load_confidence: "moderate",
+  load_status: "stable",
+  load_7d_vs_baseline_pct: 4,
   acwr: 1.53,
   hrv_trend: "flat",
   hrv_cv_7d: 7.8,

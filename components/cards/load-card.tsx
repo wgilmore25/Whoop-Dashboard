@@ -8,15 +8,6 @@ interface Props {
   details?: LoadDetails;
 }
 
-function loadColor(load: number, window: 3 | 7): string {
-  // Rough thresholds — high load relative to window
-  const high = window === 3 ? 2000 : 4500;
-  const mod = window === 3 ? 1200 : 2500;
-  if (load >= high) return "text-rose-600";
-  if (load >= mod) return "text-amber-600";
-  return "text-emerald-600";
-}
-
 function sessionAge(days: number | null) {
   if (days == null) return "—";
   return days === 0 ? "today" : `${days}d ago`;
@@ -24,7 +15,9 @@ function sessionAge(days: number | null) {
 
 export function LoadCard({ metrics, window, details }: Props) {
   const load = window === 3 ? metrics.load_3d : metrics.load_7d;
-  const color = load != null ? loadColor(load, window) : "text-muted-foreground";
+  const loadLabel = metrics.load_method === "power_kj" || metrics.load_method === "power_estimate" ? "kJ" : "load points";
+  const statusText = metrics.load_status === "unusually_high" ? "Unusually high" : metrics.load_status === "rising" ? "Rising" : metrics.load_status === "stable" ? "Stable" : "Building history";
+  const statusColor = metrics.load_status === "unusually_high" ? "text-rose-600" : metrics.load_status === "rising" ? "text-amber-600" : "text-emerald-600";
 
   return (
     <Card>
@@ -36,13 +29,13 @@ export function LoadCard({ metrics, window, details }: Props) {
       <CardContent>
         <div className="flex items-end gap-2">
           <Zap className="h-6 w-6 text-amber-400 mb-1" />
-          <span className={`text-3xl font-bold ${color}`}>
+          <span className="text-3xl font-bold text-foreground">
             {load != null ? Math.round(load) : "—"}
           </span>
-          <span className="text-muted-foreground mb-1">kJ</span>
+          <span className="text-muted-foreground mb-1">{loadLabel}</span>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Estimated training load — last {window} days
+          {metrics.load_method === "power_kj" ? "Measured power-derived load" : "Estimated load — compare within the same athlete and method"}
         </p>
         {window === 3 && (
           <div className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-xs">
@@ -52,9 +45,9 @@ export function LoadCard({ metrics, window, details }: Props) {
         )}
         {window === 7 && (
           <div className="mt-3 border-t pt-3 text-xs">
-            <div className="flex justify-between"><span className="text-muted-foreground">ACWR</span><span className="font-semibold text-foreground">{metrics.acwr != null ? metrics.acwr.toFixed(2) : "—"}</span></div>
-            <div className="mt-2 h-1.5 rounded-full bg-secondary"><div className="h-1.5 rounded-full bg-emerald-400" style={{ width: `${Math.min(100, Math.max(0, (metrics.acwr ?? 0) / 2 * 100))}%` }} /></div>
-            <div className="mt-1 flex justify-between text-muted-foreground"><span>0</span><span className="text-emerald-600">0.8–1.3</span><span>2.0+</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Personal load state</span><span className={`font-semibold ${statusColor}`}>{statusText}</span></div>
+            <p className="mt-1 text-muted-foreground">{metrics.load_7d_vs_baseline_pct != null ? `${metrics.load_7d_vs_baseline_pct >= 0 ? "+" : ""}${Math.round(metrics.load_7d_vs_baseline_pct)}% vs personal 28-day weekly median` : "Need at least 3 prior weeks for a personal comparison."}</p>
+            <p className="mt-1 text-muted-foreground">Data confidence: {metrics.load_confidence ?? "insufficient"}. ACWR is retained as context, not a risk threshold.</p>
           </div>
         )}
       </CardContent>

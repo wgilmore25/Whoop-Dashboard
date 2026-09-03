@@ -9,6 +9,8 @@ import type {
   DailyMetrics,
   HrvTrend,
   MetricConfidence,
+  LoadMethod,
+  LoadStatus,
 } from "../types";
 
 // ── Config defaults (overridable from user_settings) ─────────
@@ -71,9 +73,11 @@ export function computeSleepQualityScore(
   awakeMinutes: number | null,
   longestAwakeMinutes: number | null,
   disturbances: number,
+  sleepNeedHours = 8,
 ): number {
-  // Provisional eight-hour reference until individual sleep need is collected.
-  const durationScore = Math.min(hours / 8, 1) * 3.5;
+  // Personal recent sleep need is a better starting point than a universal
+  // eight-hour target. This is still a readiness input, not a prescription.
+  const durationScore = Math.min(hours / Math.max(sleepNeedHours, 5), 1) * 3.5;
   const efficiencyScore = Math.max(0, Math.min(efficiency ?? 0, 1)) * 2;
   const awakeBurdenScore = awakeMinutes == null ? 1.25 : Math.max(0, 2.5 * (1 - awakeMinutes / 90));
   const longestWakeScore = longestAwakeMinutes == null ? 0.75 : Math.max(0, 1.5 * (1 - longestAwakeMinutes / 45));
@@ -117,6 +121,32 @@ export function estimateActivityLoad(activity: StravaActivity): number {
 
   // 4. Duration-only fallback: 5 kJ per minute (moderate default)
   return minutes * 5;
+}
+
+export function activityLoadMethod(activity: StravaActivity): Exclude<LoadMethod, "mixed"> {
+  if (activity.kilojoules != null && activity.kilojoules > 0) return "power_kj";
+  if (activity.weighted_avg_watts != null && activity.weighted_avg_watts > 0) return "power_estimate";
+  if (activity.average_hr != null && activity.average_hr > 60) return "hr_proxy";
+  return "duration_proxy";
+}
+
+function summarizeLoadMethods(activities: StravaActivity[]): { method: LoadMethod | null; confidence: MetricConfidence } {
+  if (!activities.length) return { method: null, confidence: "insufficient" };
+  const methods = new Set(activities.map(activityLoadMethod));
+  const method: LoadMethod = methods.size === 1 ? [...methods][0] : "mixed";
+  const weakest = [...methods].some((value) => value === "duration_proxy")
+    ? "insufficient"
+    : [...methods].some((value) => value === "hr_proxy") || method === "mixed"
+      ? "moderate"
+      : "high";
+  return { method, confidence: weakest };
+}
+
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 // ── EWMA baseline ────────────────────────────────────────────
@@ -304,16 +334,7 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
       : "insufficient";
 
   // Duration, efficiency, and continuity-aware quality score (0–10).
-  const sleepQualityScore =
-    sleepHours != null
-      ? computeSleepQualityScore(
-          sleepHours,
-          sleepEfficiency,
-          awakeMinutes,
-          longestAwakeMinutes,
-          todaySleep ? sleepDisturbanceCount(todaySleep) : 0,
-        )
-      : null;
+  let sleepQualityScore: number | null = null;
 
   // ── EWMA baselines (prior BASELINE_WINDOW_DAYS, excluding today) ──
   const baselineRecoveries = recoveries.filter((r) => {
@@ -341,6 +362,17 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
   const baselineHrv = ewma(hrvValues);
   const baselineRestingHr = ewma(restingHrValues);
   const baselineSleepHours = ewma(sleepHourValues);
+
+  if (sleepHours != null) {
+    sleepQualityScore = computeSleepQualityScore(
+      sleepHours,
+      sleepEfficiency,
+      awakeMinutes,
+      longestAwakeMinutes,
+      todaySleep ? sleepDisturbanceCount(todaySleep) : 0,
+      baselineSleepHours ?? 8,
+    );
+  }
 
   // ── Percent-vs-baseline calculations ──────────────────────
   const sleepVsBaselinePct =
@@ -395,6 +427,7 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
   const load28d = activitiesLast28d.length > 0
     ? activitiesLast28d.reduce((sum, a) => sum + estimateActivityLoad(a), 0)
     : null;
+  const loadSource = summarizeLoadMethods(activitiesLast28d);
 
   // ── ACWR (Gabbett et al.) ─────────────────────────────────
   // acute (7d) / (chronic / 4) = acute / chronic_weekly_avg
@@ -403,6 +436,32 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
     load7d != null && load28d != null && load28d > 0
       ? load7d / (load28d / 4)
       : null;
+
+  // ACWR is retained for history only. Workload interpretation uses the
+  // athlete's own weekly distribution, not a population-wide "sweet spot".
+  const weeklyLoads: number[] = [];
+  for (let offset = 0; offset < 4; offset++) {
+    const weekEnd = targetMs - daysAgoMs(offset * 7);
+    const weekStart = weekEnd - daysAgoMs(7);
+    const load = activities
+      .filter((a) => {
+        const ts = new Date(a.start_date).getTime();
+        return ts >= weekStart && ts < weekEnd;
+      })
+      .reduce((sum, a) => sum + estimateActivityLoad(a), 0);
+    if (load > 0) weeklyLoads.push(load);
+  }
+  const typicalWeeklyLoad = median(weeklyLoads);
+  const load7dVsBaselinePct = load7d != null && typicalWeeklyLoad != null && typicalWeeklyLoad > 0
+    ? ((load7d - typicalWeeklyLoad) / typicalWeeklyLoad) * 100
+    : null;
+  const loadStatus: LoadStatus = weeklyLoads.length < 3 || load7dVsBaselinePct == null
+    ? "insufficient_history"
+    : load7dVsBaselinePct > 40
+      ? "unusually_high"
+      : load7dVsBaselinePct > 20
+        ? "rising"
+        : "stable";
 
   // ── Training monotony ─────────────────────────────────────
   // Build a per-day load array for the last 7 days (0 for rest days)
@@ -475,6 +534,10 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
     load_3d: load3d,
     load_7d: load7d,
     load_28d: load28d,
+    load_method: loadSource.method,
+    load_confidence: loadSource.confidence,
+    load_status: loadStatus,
+    load_7d_vs_baseline_pct: load7dVsBaselinePct,
     acwr,
     hrv_trend: hrvTrend,
     hrv_cv_7d: hrvCv.value,
