@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Zap } from "lucide-react";
 import type { DailyMetrics, LoadDetails } from "@/lib/types";
+import { MetricInfo } from "@/components/ui/metric-info";
 
 interface Props {
   metrics: DailyMetrics;
@@ -23,7 +24,7 @@ export function LoadCard({ metrics, window, details }: Props) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          {window}-Day Load
+          {window}-Day Load <MetricInfo title={`${window}-day load`}>Uses measured power-derived kJ when available; otherwise it uses an estimate. Estimates are intended for within-athlete trend tracking and are labelled as load points rather than interchangeable kJ.</MetricInfo>
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -45,7 +46,7 @@ export function LoadCard({ metrics, window, details }: Props) {
         )}
         {window === 7 && (
           <div className="mt-3 border-t pt-3 text-xs">
-            <div className="flex justify-between"><span className="text-muted-foreground">Personal load state</span><span className={`font-semibold ${statusColor}`}>{statusText}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Personal load state <MetricInfo title="Personal load state">Your current 7-day load is compared with your own 28-day weekly median. Rising is more than 20% above typical; unusually high is more than 40%. This is context, not an injury-risk prediction.</MetricInfo></span><span className={`font-semibold ${statusColor}`}>{statusText}</span></div>
             <p className="mt-1 text-muted-foreground">{metrics.load_7d_vs_baseline_pct != null ? `${metrics.load_7d_vs_baseline_pct >= 0 ? "+" : ""}${Math.round(metrics.load_7d_vs_baseline_pct)}% vs personal 28-day weekly median` : "Need at least 3 prior weeks for a personal comparison."}</p>
             <p className="mt-1 text-muted-foreground">Data confidence: {metrics.load_confidence ?? "insufficient"}. ACWR is retained as context, not a risk threshold.</p>
           </div>

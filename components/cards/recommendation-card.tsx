@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { MetricInfo } from "@/components/ui/metric-info";
 import { SESSION_LABELS, SESSION_COLORS, READINESS_LABELS, READINESS_COLORS } from "@/lib/utils";
 import type { Recommendation } from "@/lib/types";
 
@@ -19,7 +20,7 @@ export function RecommendationCard({ recommendation: rec }: Props) {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-            Today's Recommendation
+            Today&apos;s Recommendation <MetricInfo title="Today’s recommendation">Combines systemic readiness (recovery, HRV, resting HR, sleep and check-in), training-load tolerance, and data quality. Illness or pain can override wearable signals. This is training guidance, not medical or injury-risk advice.</MetricInfo>
           </CardTitle>
           <span className="text-xs text-muted-foreground">
             {rec.rule_version} · {dataConfidence} data confidence

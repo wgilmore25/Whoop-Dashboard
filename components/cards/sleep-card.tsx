@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Moon } from "lucide-react";
+import { MetricInfo } from "@/components/ui/metric-info";
 import type { DailyMetrics, SleepDetails } from "@/lib/types";
 
 interface Props {
@@ -24,7 +25,7 @@ export function SleepCard({ metrics, details }: Props) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Sleep
+          Sleep <MetricInfo title="Sleep">Sleep duration is compared with your own 14-day pattern. The quality score combines duration, efficiency, total overnight awake time, the longest wake when available, and fragmentation; total awake time is weighted more than wake count.</MetricInfo>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -39,7 +40,7 @@ export function SleepCard({ metrics, details }: Props) {
         {vsBaseline != null && (
           <p className={`mt-1 text-sm font-medium ${color}`}>
             {vsBaseline > 0 ? "+" : ""}
-            {Math.round(vsBaseline)}% vs 14-day baseline
+            {Math.round(vsBaseline)}% vs 14-day baseline {metrics.sleep_swc_pct != null && `· SWC ±${metrics.sleep_swc_pct.toFixed(1)}%`}
           </p>
         )}
         {vsBaseline == null && (
@@ -53,7 +54,7 @@ export function SleepCard({ metrics, details }: Props) {
               <div><p className="text-muted-foreground">Deep (SWS)</p><p className="font-semibold">{details.deep_minutes ?? "—"} min</p></div>
               <div><p className="text-muted-foreground">REM</p><p className="font-semibold">{details.rem_minutes ?? "—"} min</p></div>
               <div><p className="text-muted-foreground">Awake</p><p className="font-semibold">{details.awake_minutes ?? "—"} min</p></div>
-              <div><p className="text-muted-foreground">Quality score</p><p className="font-semibold">{metrics.sleep_quality_score != null ? `${metrics.sleep_quality_score.toFixed(1)} / 10` : "—"}</p></div>
+              <div><p className="text-muted-foreground">Quality score <MetricInfo title="Sleep quality score">A 0–10 exploratory composite. It is used as supporting context and is not allowed to prescribe training on its own.</MetricInfo></p><p className="font-semibold">{metrics.sleep_quality_score != null ? `${metrics.sleep_quality_score.toFixed(1)} / 10` : "—"}</p></div>
             </div>
             <div className="text-xs text-muted-foreground">
               <p className="mb-1">Stage breakdown</p>

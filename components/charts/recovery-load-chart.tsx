@@ -12,6 +12,7 @@ import {
   ReferenceLine,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MetricInfo } from "@/components/ui/metric-info";
 import type { TrendPoint } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -39,7 +40,7 @@ export function RecoveryLoadChart({ data }: Props) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Recovery vs Training Load (14 days)
+          Recovery vs Training Load (14 days) <MetricInfo title="Recovery versus load chart">Recovery uses the left axis (0–100); load uses the right axis. Each point is a daily observation, and the chart does not infer measurements between days.</MetricInfo>
         </CardTitle>
       </CardHeader>
       <CardContent>

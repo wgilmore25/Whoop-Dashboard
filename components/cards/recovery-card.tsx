@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { MetricInfo } from "@/components/ui/metric-info";
 import type { DailyMetrics, RecoveryDetails } from "@/lib/types";
 
 function scoreToBucket(score: number): "low" | "moderate" | "high" {
@@ -44,7 +45,7 @@ export function RecoveryCard({ metrics, details }: Props) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Recovery
+          Recovery <MetricInfo title="Recovery">WHOOP recovery score is displayed alongside HRV and resting-HR changes from your 14-day EWMA. A change is treated as meaningful only when it exceeds your individual 28-day SWC-style threshold, after 21 valid days.</MetricInfo>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -96,13 +97,14 @@ export function RecoveryCard({ metrics, details }: Props) {
         {hasData && (
           <div className="grid grid-cols-2 gap-3 border-t pt-3 text-xs">
             <div>
-              <p className="text-muted-foreground">HRV (ms)</p>
+              <p className="text-muted-foreground">HRV (ms) <MetricInfo title="HRV change">Today&apos;s HRV is compared with your 14-day EWMA. SWC is 0.2 × your own 28-day SD, so small normal fluctuations do not automatically change training advice.</MetricInfo></p>
               <p className="font-semibold text-foreground">{details?.hrv != null ? details.hrv.toFixed(1) : "—"} <span className="font-normal text-emerald-600">{metrics.hrv_vs_baseline_pct != null ? `${metrics.hrv_vs_baseline_pct > 0 ? "+" : ""}${Math.round(metrics.hrv_vs_baseline_pct)}%` : ""}</span></p>
             </div>
             <div>
               <p className="text-muted-foreground">HRV trend</p>
               <p className="font-semibold capitalize text-foreground">{metrics.hrv_trend ?? "—"}</p>
               <p className="text-muted-foreground">14d EWMA {details?.hrv_ewma_14d != null ? `${details.hrv_ewma_14d.toFixed(1)} ms` : "—"}</p>
+              <p className="text-muted-foreground">SWC {metrics.hrv_swc_pct != null ? `±${metrics.hrv_swc_pct.toFixed(1)}%` : "building (21 days)"}</p>
             </div>
             <div>
               <p className="text-muted-foreground">HRV stability (7d CV)</p>
@@ -114,7 +116,7 @@ export function RecoveryCard({ metrics, details }: Props) {
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground">Resting HR</p>
+              <p className="text-muted-foreground">Resting HR <MetricInfo title="Resting heart rate">A meaningful elevation is judged against your individual SWC-style threshold, not a fixed population-wide percentage.</MetricInfo></p>
               <p className="font-semibold text-foreground">{details?.resting_hr != null ? `${Math.round(details.resting_hr)} bpm` : "—"} <span className="font-normal text-emerald-600">{metrics.resting_hr_vs_baseline_pct != null ? `${metrics.resting_hr_vs_baseline_pct > 0 ? "+" : ""}${Math.round(metrics.resting_hr_vs_baseline_pct)}%` : ""}</span></p>
             </div>
           </div>

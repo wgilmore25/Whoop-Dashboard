@@ -1,6 +1,7 @@
 import {
   computeHrvCv,
   computeSleepQualityScore,
+  individualSwcPct,
 } from "@/lib/sync/normalization";
 
 describe("HRV-CV reliability", () => {
@@ -33,5 +34,16 @@ describe("continuity-aware sleep quality", () => {
     const manyWakes = computeSleepQualityScore(7.5, 0.9, 20, null, 5);
 
     expect(fewWakes - manyWakes).toBeLessThanOrEqual(0.5);
+  });
+});
+
+describe("individual SWC thresholds", () => {
+  it("does not report an individual threshold before 21 valid days", () => {
+    expect(individualSwcPct(Array.from({ length: 20 }, () => 70))).toBeNull();
+  });
+
+  it("returns a personal meaningful-change threshold after 21 valid days", () => {
+    const values = Array.from({ length: 28 }, (_, index) => 70 + (index % 4));
+    expect(individualSwcPct(values)).toBeGreaterThan(0);
   });
 });

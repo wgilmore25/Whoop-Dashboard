@@ -13,6 +13,7 @@ import {
   Cell,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MetricInfo } from "@/components/ui/metric-info";
 import { SESSION_COLORS } from "@/lib/utils";
 import type { TrendPoint, SessionCategory } from "@/lib/types";
 
@@ -25,7 +26,7 @@ export function SleepRecommendationChart({ data }: Props) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Sleep vs Recommendation (14 days)
+          Sleep vs Recommendation (14 days) <MetricInfo title="Sleep versus recommendation chart">Bars show measured sleep duration. Their colors indicate the stored recommendation category for that date; color alone does not show why the recommendation was made.</MetricInfo>
         </CardTitle>
       </CardHeader>
       <CardContent>

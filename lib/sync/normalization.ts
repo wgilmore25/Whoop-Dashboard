@@ -21,6 +21,8 @@ const BASELINE_WINDOW_DAYS = 14; // rolling window for baselines
 // considered meaningful. Below this threshold we return null rather than a
 // percentage derived from too few samples.
 const BASELINE_MIN_SAMPLES = 5;
+const SWC_WINDOW_DAYS = 28;
+const SWC_MIN_SAMPLES = 21;
 
 // EWMA smoothing factor — α=0.25 is equivalent to a ~7-period weighted window.
 // Higher α weights recent data more heavily; lower α produces a smoother baseline.
@@ -167,6 +169,19 @@ export function ewma(values: number[], alpha = EWMA_ALPHA, minSamples = BASELINE
 function pctVsBaseline(value: number, baseline: number): number {
   if (baseline === 0) return 0;
   return ((value - baseline) / baseline) * 100;
+}
+
+/**
+ * Individual SWC-style meaningful-change threshold. A classic SWC is
+ * population-based; this dashboard uses 0.2 × the athlete's own 28-day SD as
+ * an operational threshold and only reports it after 21 valid days.
+ */
+export function individualSwcPct(values: number[]): number | null {
+  if (values.length < SWC_MIN_SAMPLES) return null;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  if (mean <= 0) return null;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  return (0.2 * Math.sqrt(variance) / mean) * 100;
 }
 
 // ── Is this a HIIT session? ───────────────────────────────────
@@ -344,6 +359,10 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
       ts >= targetMs - daysAgoMs(BASELINE_WINDOW_DAYS)
     );
   });
+  const swcRecoveries = recoveries.filter((r) => {
+    const ts = new Date(r.source_created_at).getTime();
+    return ts < targetMs && ts >= targetMs - daysAgoMs(SWC_WINDOW_DAYS);
+  });
 
   const baselineSleep = sleepRecords.filter((s) => {
     const ts = new Date(s.end_time).getTime();
@@ -357,6 +376,12 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
   const hrvValues = baselineRecoveries.map((r) => r.hrv_rmssd).filter((v): v is number => v != null);
   const restingHrValues = baselineRecoveries.map((r) => r.resting_hr).filter((v): v is number => v != null);
   const sleepHourValues = baselineSleep.map((s) => s.sleep_seconds / 3600);
+  const hrvSwcPct = individualSwcPct(swcRecoveries.map((r) => r.hrv_rmssd).filter((v): v is number => v != null));
+  const restingHrSwcPct = individualSwcPct(swcRecoveries.map((r) => r.resting_hr).filter((v): v is number => v != null));
+  const sleepSwcPct = individualSwcPct(sleepRecords.filter((s) => {
+    const ts = new Date(s.end_time).getTime();
+    return ts < targetMs && ts >= targetMs - daysAgoMs(SWC_WINDOW_DAYS);
+  }).map((s) => s.sleep_seconds / 3600));
 
   // EWMA replaces simple rolling average — recent data weighted more heavily.
   const baselineHrv = ewma(hrvValues);
@@ -527,9 +552,12 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
     date: dateStr,
     sleep_hours: sleepHours,
     sleep_vs_baseline_pct: sleepVsBaselinePct,
+    sleep_swc_pct: sleepSwcPct,
     recovery_score: recoveryScore,
     hrv_vs_baseline_pct: hrvVsBaselinePct,
+    hrv_swc_pct: hrvSwcPct,
     resting_hr_vs_baseline_pct: restingHrVsBaselinePct,
+    resting_hr_swc_pct: restingHrSwcPct,
     whoop_strain: null, // populated from whoop_cycles if available
     load_3d: load3d,
     load_7d: load7d,

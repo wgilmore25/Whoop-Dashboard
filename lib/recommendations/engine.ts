@@ -36,7 +36,9 @@ function systemicState(metrics: DailyMetrics, baseline: BaselineContext, checkIn
     reasons.push("morning check-in indicates substantial fatigue, stress, or soreness");
     return { state: "suppressed", reasons };
   }
-  if ((metrics.recovery_score ?? 50) < 40 || (metrics.hrv_vs_baseline_pct ?? 0) < -8 || (metrics.resting_hr_vs_baseline_pct ?? 0) > 8) {
+  const hrvMeaningfullyLow = metrics.hrv_swc_pct != null && metrics.hrv_vs_baseline_pct != null && metrics.hrv_vs_baseline_pct < -metrics.hrv_swc_pct;
+  const rhrMeaningfullyHigh = metrics.resting_hr_swc_pct != null && metrics.resting_hr_vs_baseline_pct != null && metrics.resting_hr_vs_baseline_pct > metrics.resting_hr_swc_pct;
+  if ((metrics.recovery_score ?? 50) < 40 || hrvMeaningfullyLow || rhrMeaningfullyHigh) {
     reasons.push("recovery signals are below your recent typical range");
     return { state: "suppressed", reasons };
   }

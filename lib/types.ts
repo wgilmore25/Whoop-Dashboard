@@ -45,9 +45,12 @@ export interface DailyMetrics {
   date: string; // ISO date string "YYYY-MM-DD"
   sleep_hours: number | null;
   sleep_vs_baseline_pct: number | null;
+  sleep_swc_pct: number | null;
   recovery_score: number | null;
   hrv_vs_baseline_pct: number | null;
+  hrv_swc_pct: number | null;
   resting_hr_vs_baseline_pct: number | null;
+  resting_hr_swc_pct: number | null;
   whoop_strain: number | null;
   load_3d: number | null;
   load_7d: number | null;

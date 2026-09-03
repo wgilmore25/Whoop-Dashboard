@@ -104,9 +104,12 @@ export const mockTodayMetrics: DailyMetrics = {
   date: "2026-03-24",
   sleep_hours: 7.25,
   sleep_vs_baseline_pct: -8,
+  sleep_swc_pct: 2.4,
   recovery_score: 62,
   hrv_vs_baseline_pct: -5,
+  hrv_swc_pct: 3.2,
   resting_hr_vs_baseline_pct: +3,
+  resting_hr_swc_pct: 2.8,
   whoop_strain: 8.2,
   load_3d: 1758,    // kJ proxy
   load_7d: 3420,
