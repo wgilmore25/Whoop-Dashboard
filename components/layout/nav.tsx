@@ -8,6 +8,7 @@ import {
   Upload,
   Link2,
   History,
+  ClipboardCheck,
   Settings,
   Activity,
 } from "lucide-react";
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { href: "/upload", label: "Upload", icon: Upload },
   { href: "/connect", label: "Connect", icon: Link2 },
   { href: "/history", label: "History", icon: History },
+  { href: "/review", label: "Review", icon: ClipboardCheck },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

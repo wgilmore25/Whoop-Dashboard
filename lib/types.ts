@@ -220,3 +220,18 @@ export interface MorningCheckIn {
   planned_session: SessionCategory | null;
   notes?: string | null;
 }
+
+export interface RecommendationOutcome {
+  id?: string;
+  user_id: string;
+  recommendation_id: string;
+  date: string;
+  chosen_session: SessionCategory | null;
+  completed_session: boolean | null;
+  session_rpe: number | null;
+  achieved_intended_intensity: boolean | null;
+  excessive_fatigue: boolean;
+  illness_or_pain: boolean;
+  appropriateness_rating: number | null;
+  notes?: string | null;
+}
