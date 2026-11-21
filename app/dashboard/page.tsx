@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/nav";
 import { RecoveryCard } from "@/components/cards/recovery-card";
 import { SleepCard } from "@/components/cards/sleep-card";
@@ -12,14 +14,14 @@ import { MorningCheckIn } from "@/components/dashboard/morning-check-in";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/config/env";
-import { generateExplanation } from "@/lib/explanations/generator";
 import { mockDashboardData } from "@/lib/mock-data";
-import { fallbackRecommendation } from "@/lib/recommendations/client";
+import { RECOMMENDATION_RULE_VERSION } from "@/lib/recommendations/engine";
+import { readinessInputGaps } from "@/lib/sync/freshness";
+import { isUsableOvernightSleep } from "@/lib/sync/normalization";
 import type {
   DashboardData,
   DailyMetrics,
   Recommendation,
-  RecommendationExplanation,
   StravaActivity,
   TrendPoint,
   OAuthConnection,
@@ -28,29 +30,34 @@ import type {
   LoadDetails,
 } from "@/lib/types";
 
-// ── Live Supabase data fetch ──────────────────────────────────
-// Fetches today's metrics, recommendation, trend history, recent activities,
-// and connection statuses from the database.
-//
-// Falls back to mock data when:
-//   • The user has no metrics for today (sync hasn't run yet)
-//   • Any query fails unexpectedly
-// This keeps the dashboard useful before the first sync completes.
+type Connections = DashboardData["connections"];
 
-async function getDashboardDataLive(): Promise<DashboardData> {
+type LiveData = Omit<DashboardData, "recommendation" | "explanation"> & {
+  recommendation: Recommendation | null;
+  explanation: DashboardData["explanation"] | null;
+  inputGaps: string[];
+  sourceDates: { recovery: string | null; sleep: string | null; activity: string | null };
+};
+
+type DashboardState =
+  | { kind: "demo"; data: DashboardData }
+  | { kind: "live"; data: LiveData }
+  | { kind: "empty"; connections: Connections }
+  | { kind: "unavailable" | "signed_out" };
+
+async function getDashboardDataLive(): Promise<DashboardState> {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError && authError.name !== "AuthSessionMissingError") throw authError;
+  if (!user) return { kind: "signed_out" };
 
-  if (!user) return mockDashboardData;
-
-  const today = new Date().toISOString().split("T")[0];
-  const d14ago = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const d14ago = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split("T")[0];
   const d30ago = new Date(
-    Date.now() - 30 * 24 * 60 * 60 * 1000
+    now.getTime() - 30 * 24 * 60 * 60 * 1000
   ).toISOString();
 
   const [
@@ -105,39 +112,41 @@ async function getDashboardDataLive(): Promise<DashboardData> {
       .from("whoop_recoveries")
       .select("score, hrv_rmssd, resting_hr, source_created_at")
       .eq("user_id", user.id)
-      .gte("source_created_at", d14ago)
+      .gte("source_created_at", d30ago)
       .order("source_created_at", { ascending: true }),
     supabase
       .from("whoop_sleep")
-      .select("end_time, raw_json")
+      .select("start_time, end_time, sleep_seconds, raw_json")
       .eq("user_id", user.id)
       .gte("end_time", d30ago)
-      .order("end_time", { ascending: false })
-      .limit(7),
+      .order("start_time", { ascending: true }),
   ]);
 
-  // Use the latest completed day when today's WHOOP recovery has not arrived
-  // yet. This prevents real data from being replaced by old demo data each
-  // morning before the wearable has published a new recovery record.
-  if (!metricsRes.data) {
-    console.info(
-      `[dashboard] No data for user ${user.id} on ${today}. ` +
-        "No completed daily metrics have been stored yet."
-    );
-    return mockDashboardData;
-  }
+  const queryError = [metricsRes, recRes, activitiesRes, trendMetRes, trendRecRes, connRes, recoveryRes, sleepRes]
+    .find((result) => result.error)?.error;
+  if (queryError) throw queryError;
 
-  const metrics = metricsRes.data as unknown as DailyMetrics;
+  const connRows = (connRes.data ?? []) as OAuthConnection[];
+  const makeNullConn = (provider: OAuthConnection["provider"]): OAuthConnection => ({
+    id: "", user_id: user.id, provider, status: "disconnected", last_synced_at: null,
+  });
+  const connections = {
+    whoop: connRows.find((c) => c.provider === "whoop") ?? makeNullConn("whoop"),
+    strava: connRows.find((c) => c.provider === "strava") ?? makeNullConn("strava"),
+  };
+  if (!metricsRes.data) return { kind: "empty", connections };
 
-  // Use the recommendation generated for this exact metrics day. Fetching the
-  // latest recommendation independently can combine yesterday's recovery with
-  // today's recommendation, which produces contradictory guidance.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recRow = (recRes.data ?? []).find((row: any) => row.date === metrics.date) as any;
-  // Python is the only recommendation engine. The UI must not re-derive a
-  // different prescription from the same metrics when the service is down.
-  const useStoredRecommendation = Boolean(recRow);
-  const recommendation: Recommendation = useStoredRecommendation
+  const metrics = metricsRes.data as DailyMetrics;
+  const inputGaps = readinessInputGaps(metrics, connections, now);
+  const recRow = recRes.data?.find((row) => row.date === today && row.rule_version === RECOMMENDATION_RULE_VERSION);
+  const expRow = recRow?.recommendation_explanations?.[0];
+  // If a new provider sync succeeded but normalization failed, the previous
+  // recommendation used a different snapshot and should stay hidden.
+  const computedAt = Date.parse(metrics.computed_at ?? "");
+  const metricsAreCurrent = Object.values(connections).every((connection) =>
+    !connection.last_synced_at || Date.parse(connection.last_synced_at) <= computedAt
+  );
+  const recommendation: Recommendation | null = recRow && expRow && !inputGaps.length && metricsAreCurrent
     ? {
         readiness_bucket: recRow.readiness_bucket,
         recommended_session: recRow.recommended_session,
@@ -145,20 +154,14 @@ async function getDashboardDataLive(): Promise<DashboardData> {
         duration_min_low: recRow.duration_min_low ?? null,
         duration_min_high: recRow.duration_min_high ?? null,
         strength_allowed: recRow.strength_allowed ?? false,
-        confidence: recRow.confidence ?? 0.5,
-        rule_version: recRow.rule_version ?? "v1",
+        confidence: recRow.confidence ?? 0.35,
+        rule_version: recRow.rule_version,
         why: [],
       }
-    : fallbackRecommendation();
-
-  // Use stored explanation if present; re-generate deterministically if not.
-  const expRow = useStoredRecommendation ? recRow?.recommendation_explanations?.[0] : null;
-  const explanation: RecommendationExplanation = expRow
-    ? {
-        summary: expRow.plain_language_summary,
-        bullets: expRow.bullets_json as string[],
-      }
-    : generateExplanation(recommendation);
+    : null;
+  const explanation = recommendation && expRow
+    ? { summary: expRow.plain_language_summary, bullets: expRow.bullets_json as string[] }
+    : null;
 
   const recentActivities = (activitiesRes.data ?? []) as unknown as StravaActivity[];
 
@@ -174,17 +177,18 @@ async function getDashboardDataLive(): Promise<DashboardData> {
     recommended_session: (recsByDate[m.date] as TrendPoint["recommended_session"] | undefined) ?? null,
   }));
 
-  const connRows = connRes.data ?? [];
   const recoveryRows = recoveryRes.data ?? [];
-  const todayRecovery = recoveryRows.find(
-    (row) => new Date(row.source_created_at).toISOString().split("T")[0] === metrics.date
+  const scoredRecoveries = recoveryRows.filter((row) => row.score != null);
+  const todayRecovery = scoredRecoveries.find(
+    (row) => new Date(row.source_created_at).toISOString().slice(0, 10) === metrics.date
   );
   const recoveryDetails: RecoveryDetails = {
     hrv: todayRecovery?.hrv_rmssd ?? null,
     resting_hr: todayRecovery?.resting_hr ?? null,
     hrv_history: recoveryRows
-      .map((row) => Number(row.hrv_rmssd))
-      .filter((value) => Number.isFinite(value)),
+      .filter((row) => Date.parse(row.source_created_at) >= Date.parse(d14ago))
+      .map((row) => row.hrv_rmssd)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
     hrv_ewma_14d: null,
     hrv_baseline: null,
     hrv_cv_7d: metrics.hrv_cv_7d,
@@ -203,7 +207,8 @@ async function getDashboardDataLive(): Promise<DashboardData> {
 
   // WHOOP keeps sleep stages inside raw_json. The sync layer preserves that
   // response, so use it directly and gracefully omit stages from older rows.
-  const rawSleep = sleepRes.data?.find(
+  const overnightSleep = (sleepRes.data ?? []).filter(isUsableOvernightSleep);
+  const rawSleep = overnightSleep.find(
     (row) => new Date(row.end_time).toISOString().split("T")[0] === metrics.date
   )?.raw_json as Record<string, unknown> | null | undefined;
   const originalSleep = (rawSleep?.raw_json ?? rawSleep) as Record<string, unknown> | undefined;
@@ -243,54 +248,40 @@ async function getDashboardDataLive(): Promise<DashboardData> {
     last_hard_session_days: daysSince((activity) => activity.moving_time > 3600 || (activity.average_hr ?? 0) >= 145 || (activity.max_hr ?? 0) >= 155),
     last_long_session_days: daysSince((activity) => activity.moving_time > 3600),
   };
-  const makeNullConn = (provider: OAuthConnection["provider"]): OAuthConnection => ({
-    id: "",
-    user_id: user.id,
-    provider,
-    provider_user_id: "",
-    status: "disconnected",
-    last_synced_at: null,
-  });
+  const sourceDates = {
+    recovery: scoredRecoveries[scoredRecoveries.length - 1]?.source_created_at ?? null,
+    sleep: overnightSleep.reduce<string | null>((latest, row) =>
+      !latest || Date.parse(row.end_time) > Date.parse(latest) ? row.end_time : latest, null),
+    activity: recentActivities[0]?.start_date ?? null,
+  };
 
   return {
-    metrics,
-    recommendation,
-    explanation,
-    recentActivities,
-    trendData,
-    connections: {
-      whoop:
-        (connRows.find((c) => c.provider === "whoop") as unknown as OAuthConnection) ??
-        makeNullConn("whoop"),
-      strava:
-        (connRows.find((c) => c.provider === "strava") as unknown as OAuthConnection) ??
-        makeNullConn("strava"),
+    kind: "live",
+    data: {
+      metrics, recommendation, explanation, recentActivities, trendData, connections,
+      recoveryDetails, sleepDetails, loadDetails, inputGaps, sourceDates,
     },
-    recoveryDetails,
-    sleepDetails,
-    loadDetails,
   };
 }
 
-// ── Entry point — mock fallback hierarchy ────────────────────
-// Priority: explicit mock mode → Supabase not configured → live fetch → error fallback
-async function getDashboardData(): Promise<DashboardData> {
+async function getDashboardData(): Promise<DashboardState> {
   if (process.env.NEXT_PUBLIC_MOCK_MODE === "true") {
-    return mockDashboardData;
+    return { kind: "demo", data: mockDashboardData };
   }
-  if (!isSupabaseConfigured()) {
-    console.warn(
-      "[dashboard] Supabase credentials not configured — serving mock data. " +
-        "Set real credentials in .env.local or set NEXT_PUBLIC_MOCK_MODE=true."
-    );
-    return mockDashboardData;
+  if (isSupabaseConfigured()) {
+    try {
+      return await getDashboardDataLive();
+    } catch (error) {
+      console.error("[dashboard] Could not load live data:", error);
+    }
   }
-  try {
-    return await getDashboardDataLive();
-  } catch (err) {
-    console.error("[dashboard] Live data fetch failed, falling back to mock:", err);
-    return mockDashboardData;
-  }
+  return { kind: "unavailable" };
+}
+
+function sourceDate(timestamp: string | null) {
+  return timestamp
+    ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(timestamp))
+    : "no recent record";
 }
 
 // Simple history table
@@ -312,7 +303,7 @@ function HistoryTable({ data }: { data: DashboardData["trendData"] }) {
             <tr key={row.date} className="border-b last:border-0 hover:bg-secondary/30 transition-colors">
               <td className="px-4 py-3 font-medium">
                 {new Date(row.date).toLocaleDateString("en-US", {
-                  weekday: "short", month: "short", day: "numeric",
+                  weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
                 })}
               </td>
               <td className="px-4 py-3 text-right">
@@ -340,10 +331,28 @@ function HistoryTable({ data }: { data: DashboardData["trendData"] }) {
 }
 
 export default async function DashboardPage() {
-  const data = await getDashboardData();
-  const { metrics, recommendation, explanation, recentActivities, trendData, connections, recoveryDetails, sleepDetails, loadDetails } = data;
+  const state = await getDashboardData();
+  if (state.kind === "signed_out") redirect("/login");
 
-  const isMock = process.env.NEXT_PUBLIC_MOCK_MODE === "true";
+  if (state.kind !== "demo" && state.kind !== "live") {
+    return (
+      <AppShell>
+        <div className="space-y-4">
+          <h1 className="text-2xl font-bold">Training Readiness</h1>
+          {state.kind === "empty" ? (
+            <>
+              <p className="text-muted-foreground">No live metrics yet. <Link href="/connect" className="underline">Connect a provider</Link> and sync to get started.</p>
+              <SyncStatus connections={state.connections} now={new Date().toISOString()} />
+            </>
+          ) : (
+            <p role="status" className="text-muted-foreground">Live data is unavailable. Refresh the page to try again.</p>
+          )}
+        </div>
+      </AppShell>
+    );
+  }
+
+  const { metrics, recommendation, explanation, recentActivities, trendData, connections, recoveryDetails, sleepDetails, loadDetails } = state.data;
 
   return (
     <AppShell>
@@ -354,16 +363,29 @@ export default async function DashboardPage() {
             <h1 className="text-2xl font-bold">Training Readiness</h1>
             <p className="text-muted-foreground">
               {new Date().toLocaleDateString("en-US", {
-                weekday: "long", year: "numeric", month: "long", day: "numeric",
+                weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "UTC",
               })}
             </p>
           </div>
-          {isMock && (
-            <Badge variant="warning">Mock mode — no live data</Badge>
+          {state.kind === "demo" && (
+            <Badge variant="warning">Demo data</Badge>
           )}
         </div>
 
-        <SyncStatus connections={connections} />
+        {state.kind === "live" && (
+          <>
+            <SyncStatus connections={connections} now={new Date().toISOString()} />
+            <p className="text-sm text-muted-foreground">
+              Metrics for {metrics.date} (UTC) · Latest records (UTC): WHOOP recovery {sourceDate(state.data.sourceDates.recovery)},
+              sleep {sourceDate(state.data.sourceDates.sleep)}, Strava activity {sourceDate(state.data.sourceDates.activity)}
+            </p>
+            {state.data.inputGaps.length > 0 && (
+              <p role="status" className="rounded-xl border bg-card px-4 py-3 text-sm">
+                {state.data.inputGaps.join(" · ")}
+              </p>
+            )}
+          </>
+        )}
 
         {/* Top row — status cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -376,16 +398,21 @@ export default async function DashboardPage() {
         {/* Middle row — recommendation */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-1">
-            <RecommendationCard recommendation={recommendation} />
+            {recommendation ? <RecommendationCard recommendation={recommendation} /> : (
+              <div className="rounded-xl border bg-card p-4">
+                <h2 className="font-medium">Recommendation unavailable</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Sync to generate guidance from current inputs.</p>
+              </div>
+            )}
           </div>
           <div className="lg:col-span-1">
-            <ExplanationCard explanation={explanation} />
+            {explanation && <ExplanationCard explanation={explanation} />}
           </div>
           <div className="lg:col-span-1">
             <RecentSessionsCard activities={recentActivities} />
           </div>
         </div>
-        <MorningCheckIn />
+        {state.kind === "live" && <MorningCheckIn />}
 
         {/* Bottom row — charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

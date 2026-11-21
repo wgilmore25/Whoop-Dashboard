@@ -8,6 +8,32 @@ import type { StravaActivity } from "../types";
 
 const STRAVA_API_BASE = "https://www.strava.com/api/v3";
 
+interface ActivityRecord {
+  id?: number | string;
+  id_str?: string;
+  start_date: string;
+  type: string;
+  name: string;
+  moving_time: number;
+  elapsed_time: number;
+  distance?: number;
+  total_elevation_gain?: number;
+  average_heartrate?: number;
+  max_heartrate?: number;
+  average_watts?: number;
+  weighted_average_watts?: number;
+  kilojoules?: number;
+  trainer?: boolean;
+  commute?: boolean;
+}
+
+function activityId(activity: ActivityRecord): string {
+  const id = activity.id_str ?? activity.id;
+  if (typeof id === "string" && /^\d+$/.test(id)) return id;
+  if (typeof id === "number" && Number.isSafeInteger(id)) return String(id);
+  throw new Error("Strava activity is missing a lossless identifier");
+}
+
 // ── Token refresh ────────────────────────────────────────────
 
 export async function refreshStravaToken(refreshToken: string): Promise<{
@@ -38,25 +64,33 @@ export async function fetchStravaActivities(
   accessToken: string,
   userId: string,
   after: Date,
-  perPage = 50
-): Promise<StravaActivity[]> {
+  before = new Date(),
+): Promise<Omit<StravaActivity, "id">[]> {
   const params = new URLSearchParams({
-    after: String(Math.floor(after.getTime() / 1000)), // Unix timestamp
-    per_page: String(perPage),
+    after: String(Math.floor(after.getTime() / 1000)),
+    before: String(Math.ceil(before.getTime() / 1000)),
+    per_page: "100",
   });
+  const activities = new Map<string, ActivityRecord>();
 
-  const res = await fetch(
-    `${STRAVA_API_BASE}/athlete/activities?${params}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
+  for (let page = 1; ; page += 1) {
+    params.set("page", String(page));
+    const response = await fetch(`${STRAVA_API_BASE}/athlete/activities?${params}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Strava activities fetch failed: ${response.status}`);
+    const records = await response.json() as ActivityRecord[];
+    if (!Array.isArray(records)) throw new Error("Strava response is missing activities");
+    if (records.length === 0) break;
+    const previousCount = activities.size;
+    for (const activity of records) activities.set(activityId(activity), activity);
+    if (activities.size === previousCount) throw new Error("Strava pagination returned no new activities");
+  }
 
-  if (!res.ok) throw new Error(`Strava activities fetch failed: ${res.status}`);
-  const data: any[] = await res.json();
-
-  return data.map((a) => ({
-    id: undefined as any,
+  return [...activities].map(([id, a]) => ({
     user_id: userId,
-    strava_activity_id: String(a.id),
+    strava_activity_id: id,
     start_date: a.start_date,
     type: a.type,
     name: a.name,

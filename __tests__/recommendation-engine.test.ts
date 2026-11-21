@@ -25,7 +25,7 @@ describe("personal-baseline recommendation engine", () => {
 
   it("permits a planned quality session when recovery is elevated and load is appropriate", () => {
     const result = buildRecommendation({
-      metrics: { ...mockTodayMetrics, recovery_score: 82, sleep_vs_baseline_pct: 2, load_status: "stable", load_7d_vs_baseline_pct: 3 },
+      metrics: { ...mockTodayMetrics, recovery_score: 82, sleep_vs_baseline_pct: 2, hrv_vs_baseline_pct: 0, resting_hr_vs_baseline_pct: 0, load_status: "stable", load_7d_vs_baseline_pct: 3 },
       baseline,
       checkIn: { user_id: "u", date: "2026-03-24", fatigue: 1, soreness: 1, stress: 1, motivation: 4, illness_symptoms: false, pain_or_injury: false, travel_or_jet_lag: false, planned_session: "tempo" },
     });

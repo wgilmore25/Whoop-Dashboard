@@ -22,19 +22,20 @@ export async function POST(request: NextRequest) {
   const provider: "whoop" | "strava" | undefined = body.provider;
 
   const serviceClient = createServiceClient();
-  const syncStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days back
+  const syncEnd = new Date();
+  const syncStart = new Date(syncEnd.getTime() - 45 * 24 * 60 * 60 * 1000);
   const results: string[] = [];
 
   // ── WHOOP sync ───────────────────────────────────────────────
   if (!provider || provider === "whoop") {
-    const { data: conn } = await serviceClient
+    const { data: conn, error: connectionError } = await serviceClient
       .from("oauth_connections")
       .select("*")
       .eq("user_id", user.id)
       .eq("provider", "whoop")
-      .single();
+      .maybeSingle();
 
-    if (conn?.status === "connected" && conn.access_token_encrypted) {
+    if (conn && (conn.status === "connected" || conn.status === "sync_error") && conn.access_token_encrypted) {
       try {
         let token = conn.access_token_encrypted;
 
@@ -59,34 +60,31 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        const recoveries = await fetchWhoopRecoveries(token, user.id, syncStart, new Date());
+        const [recoveries, sleepRecords] = await Promise.all([
+          fetchWhoopRecoveries(token, user.id, syncStart, syncEnd),
+          fetchWhoopSleep(token, user.id, syncStart, syncEnd),
+        ]);
         if (recoveries.length > 0) {
-          const recoveryRows = recoveries.map(({ id: _id, ...r }) => ({
-            ...r,
-            raw_json: r,
-          }));
+          const recoveryRows = [...new Map(recoveries.map((row) => [row.cycle_id, row])).values()];
           const { error } = await serviceClient
             .from("whoop_recoveries")
             .upsert(recoveryRows, { onConflict: "user_id,cycle_id" });
           if (error) throw new Error(`WHOOP recovery save failed: ${error.message}`);
         }
 
-        const sleepRecords = await fetchWhoopSleep(token, user.id, syncStart, new Date());
         if (sleepRecords.length > 0) {
-          const sleepRows = sleepRecords.map(({ id: _id, ...s }) => ({
-            ...s,
-            raw_json: s,
-          }));
+          const sleepRows = [...new Map(sleepRecords.map((row) => [row.sleep_id, row])).values()];
           const { error } = await serviceClient
             .from("whoop_sleep")
             .upsert(sleepRows, { onConflict: "user_id,sleep_id" });
           if (error) throw new Error(`WHOOP sleep save failed: ${error.message}`);
         }
 
-        await serviceClient
+        const { error: statusError } = await serviceClient
           .from("oauth_connections")
           .update({ last_synced_at: new Date().toISOString(), status: "connected" })
           .eq("id", conn.id);
+        if (statusError) throw new Error(`Could not save sync status: ${statusError.message}`);
 
         results.push(
           `WHOOP: synced ${recoveries.length} recoveries, ${sleepRecords.length} sleep records`
@@ -95,7 +93,7 @@ export async function POST(request: NextRequest) {
         console.error("[sync] WHOOP sync error:", err);
         const tokenFailure =
           err instanceof Error &&
-          (err.message.includes("token refresh failed") ||
+          (/token refresh failed:.*(?:400|401|no renewable refresh token)/.test(err.message) ||
             err.message.includes("fetch failed: 401"));
         await serviceClient
           .from("oauth_connections")
@@ -104,27 +102,28 @@ export async function POST(request: NextRequest) {
         results.push(tokenFailure ? "WHOOP: authorization expired — reconnect required" : "WHOOP: sync failed");
       }
     } else {
-      results.push("WHOOP: not connected");
+      results.push(connectionError ? "WHOOP: could not read connection" :
+        conn?.status === "token_expired" ? "WHOOP: reconnect required" : "WHOOP: not connected");
     }
   }
 
   // ── Strava sync ──────────────────────────────────────────────
   if (!provider || provider === "strava") {
-    const { data: conn } = await serviceClient
+    const { data: conn, error: connectionError } = await serviceClient
       .from("oauth_connections")
       .select("*")
       .eq("user_id", user.id)
       .eq("provider", "strava")
-      .single();
+      .maybeSingle();
 
-    if (conn?.status === "connected" && conn.access_token_encrypted) {
+    if (conn && (conn.status === "connected" || conn.status === "sync_error") && conn.access_token_encrypted) {
       try {
         let token = conn.access_token_encrypted;
 
         if (conn.expires_at && new Date(conn.expires_at) < new Date()) {
           const refreshed = await refreshStravaToken(conn.refresh_token_encrypted);
           token = refreshed.access_token;
-          await serviceClient
+          const { error: refreshSaveError } = await serviceClient
             .from("oauth_connections")
             .update({
               access_token_encrypted: refreshed.access_token,
@@ -132,36 +131,39 @@ export async function POST(request: NextRequest) {
               expires_at: new Date(refreshed.expires_at * 1000).toISOString(),
             })
             .eq("id", conn.id);
+          if (refreshSaveError) {
+            throw new Error(`Strava refreshed token could not be saved: ${refreshSaveError.message}`);
+          }
         }
 
-        const activities = await fetchStravaActivities(token, user.id, syncStart);
-        if (activities.length > 0) {
-          const activityRows = activities.map(({ id: _id, ...a }) => ({
-            ...a,
-            raw_json: a.raw_json ?? a,
-          }));
+        const activities = await fetchStravaActivities(token, user.id, syncStart, syncEnd);
+        for (let offset = 0; offset < activities.length; offset += 200) {
           const { error } = await serviceClient
             .from("strava_activities")
-            .upsert(activityRows, { onConflict: "user_id,strava_activity_id" });
+            .upsert(activities.slice(offset, offset + 200), { onConflict: "user_id,strava_activity_id" });
           if (error) throw new Error(`Strava activity save failed: ${error.message}`);
         }
 
-        await serviceClient
+        const { error: statusError } = await serviceClient
           .from("oauth_connections")
           .update({ last_synced_at: new Date().toISOString(), status: "connected" })
           .eq("id", conn.id);
+        if (statusError) throw new Error(`Could not save sync status: ${statusError.message}`);
 
         results.push(`Strava: synced ${activities.length} activities`);
       } catch (err) {
         console.error("[sync] Strava sync error:", err);
+        const tokenFailure = err instanceof Error &&
+          /token refresh failed: (400|401)|fetch failed: 401/.test(err.message);
         await serviceClient
           .from("oauth_connections")
-          .update({ status: "sync_error" })
+          .update({ status: tokenFailure ? "token_expired" : "sync_error" })
           .eq("id", conn.id);
-        results.push("Strava: sync failed");
+        results.push(tokenFailure ? "Strava: reconnect required" : "Strava: sync failed");
       }
     } else {
-      results.push("Strava: not connected");
+      results.push(connectionError ? "Strava: could not read connection" :
+        conn?.status === "token_expired" ? "Strava: reconnect required" : "Strava: not connected");
     }
   }
 

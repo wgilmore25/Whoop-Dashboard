@@ -8,9 +8,11 @@ import { isSupabaseConfigured } from "@/lib/config/env";
 import type { SessionCategory, StravaActivity, TrendPoint } from "@/lib/types";
 
 async function getHistoryData(): Promise<{ trendData: TrendPoint[]; activities: StravaActivity[] }> {
-  if (process.env.NEXT_PUBLIC_MOCK_MODE === "true" || !isSupabaseConfigured()) {
+  if (process.env.NEXT_PUBLIC_MOCK_MODE === "true") {
     return { trendData: [...mockTrendData].reverse(), activities: mockStravaActivities };
   }
+
+  if (!isSupabaseConfigured()) return { trendData: [], activities: [] };
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -45,6 +47,7 @@ export default async function HistoryPage() {
       <div className="space-y-8">
         <div>
           <h1 className="text-2xl font-bold">History</h1>
+          {process.env.NEXT_PUBLIC_MOCK_MODE === "true" && <Badge variant="warning">Demo data</Badge>}
           <p className="text-muted-foreground mt-1">
             Daily metrics and recent activities
           </p>
