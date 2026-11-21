@@ -102,9 +102,10 @@ export interface WhoopRecovery {
   id: string;
   user_id: string;
   cycle_id: string;
-  score: number;
-  hrv_rmssd: number;
-  resting_hr: number;
+  score: number | null;
+  hrv_rmssd: number | null;
+  resting_hr: number | null;
+  raw_json?: unknown;
   skin_temp?: number | null;
   spo2?: number | null;
   source_created_at: string;
@@ -119,6 +120,7 @@ export interface WhoopSleep {
   sleep_seconds: number;
   sleep_efficiency: number;
   sleep_performance_pct: number;
+  raw_json?: unknown;
 }
 
 export interface StravaActivity {

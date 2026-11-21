@@ -42,6 +42,13 @@ function rawSleepRecord(sleep: WhoopSleep): Record<string, unknown> | undefined 
 }
 
 /** Total awake time (WASO) is more meaningful than a simple wake count. */
+export function isUsableOvernightSleep(sleep: Pick<WhoopSleep, "sleep_seconds" | "raw_json">): boolean {
+  const raw = sleep.raw_json as Record<string, unknown> | undefined;
+  const original = (raw?.raw_json ?? raw) as Record<string, unknown> | undefined;
+  return sleep.sleep_seconds > 0 && original?.nap !== true &&
+    (original?.score_state == null || original.score_state === "SCORED");
+}
+
 export function sleepAwakeMinutes(sleep: WhoopSleep): number | null {
   const stages = (rawSleepRecord(sleep)?.score as Record<string, unknown> | undefined)
     ?.stage_summary as Record<string, unknown> | undefined;
@@ -265,7 +272,7 @@ function computeConsecutiveLowRecoveryDays(
   for (const r of sorted) {
     const rDateStr = new Date(r.source_created_at).toISOString().split("T")[0];
     if (rDateStr !== expectedDateStr) break; // gap in data — stop streak
-    if (r.score >= 50) break; // recovered — streak ends
+    if (r.score == null || r.score >= 50) break;
     streak++;
     // Advance to the previous day
     const prev = new Date(expectedDateStr);
@@ -310,14 +317,16 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
     userId,
     targetDate,
     recoveries,
-    sleepRecords,
+    sleepRecords: allSleepRecords,
     activities,
     hiitHrThreshold = DEFAULT_HIIT_HR_THRESHOLD,
     longSessionMinutes = DEFAULT_LONG_SESSION_MINUTES,
   } = input;
 
+  const sleepRecords = allSleepRecords.filter(isUsableOvernightSleep);
   const dateStr = targetDate.toISOString().split("T")[0];
   const targetMs = targetDate.getTime();
+  const dayStartMs = Date.parse(dateStr);
 
   // Helper: ms before target date
   const daysAgoMs = (d: number) => d * 24 * 60 * 60 * 1000;
@@ -325,7 +334,7 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
   // ── Find today's recovery record ──────────────────────────
   const todayRecovery = recoveries.find((r) => {
     const d = new Date(r.source_created_at).toISOString().split("T")[0];
-    return d === dateStr;
+    return d === dateStr && r.score != null;
   });
 
   // ── Sleep for last night ──────────────────────────────────
@@ -355,20 +364,20 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
   const baselineRecoveries = recoveries.filter((r) => {
     const ts = new Date(r.source_created_at).getTime();
     return (
-      ts < targetMs &&
-      ts >= targetMs - daysAgoMs(BASELINE_WINDOW_DAYS)
+      ts < dayStartMs &&
+      ts >= dayStartMs - daysAgoMs(BASELINE_WINDOW_DAYS)
     );
   });
   const swcRecoveries = recoveries.filter((r) => {
     const ts = new Date(r.source_created_at).getTime();
-    return ts < targetMs && ts >= targetMs - daysAgoMs(SWC_WINDOW_DAYS);
+    return ts < dayStartMs && ts >= dayStartMs - daysAgoMs(SWC_WINDOW_DAYS);
   });
 
   const baselineSleep = sleepRecords.filter((s) => {
     const ts = new Date(s.end_time).getTime();
     return (
-      ts < targetMs &&
-      ts >= targetMs - daysAgoMs(BASELINE_WINDOW_DAYS)
+      ts < dayStartMs &&
+      ts >= dayStartMs - daysAgoMs(BASELINE_WINDOW_DAYS)
     );
   });
 
@@ -380,7 +389,7 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
   const restingHrSwcPct = individualSwcPct(swcRecoveries.map((r) => r.resting_hr).filter((v): v is number => v != null));
   const sleepSwcPct = individualSwcPct(sleepRecords.filter((s) => {
     const ts = new Date(s.end_time).getTime();
-    return ts < targetMs && ts >= targetMs - daysAgoMs(SWC_WINDOW_DAYS);
+    return ts < dayStartMs && ts >= dayStartMs - daysAgoMs(SWC_WINDOW_DAYS);
   }).map((s) => s.sleep_seconds / 3600));
 
   // EWMA replaces simple rolling average — recent data weighted more heavily.

@@ -1,12 +1,13 @@
 // POST /api/recommendation — compute and store recommendation for today
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { buildRecommendation } from "@/lib/recommendations/engine";
 import { generateExplanation } from "@/lib/explanations/generator";
 import { normalizeDailyMetrics } from "@/lib/sync/normalization";
-import type { MorningCheckIn } from "@/lib/types";
+import { readinessInputGaps } from "@/lib/sync/freshness";
+import type { MorningCheckIn, OAuthConnection, StravaActivity } from "@/lib/types";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -15,51 +16,67 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceClient = createServiceClient();
-  const today = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
 
   // Load enough history to establish a personal, not population-wide, context.
-  const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+  const since = new Date(now.getTime() - 45 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [recoveries, sleepRecords, activities, settings, checkIn] = await Promise.all([
+  const activitiesQuery = async () => {
+    const pageSize = 500;
+    const activities: StravaActivity[] = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await serviceClient.from("strava_activities")
+        .select("*")
+        .eq("user_id", user.id)
+        .gte("start_date", since)
+        .order("start_date", { ascending: true })
+        .order("strava_activity_id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      if (error) return { data: null, error };
+      activities.push(...data);
+      if (data.length < pageSize) return { data: activities, error: null };
+    }
+  };
+  const [recoveries, sleepRecords, activities, settings, checkIn, connections] = await Promise.all([
     serviceClient
       .from("whoop_recoveries")
       .select("*")
       .eq("user_id", user.id)
       .gte("source_created_at", since)
-      .order("source_created_at", { ascending: true })
-      .then((r) => r.data ?? []),
+      .order("source_created_at", { ascending: true }),
     serviceClient
       .from("whoop_sleep")
       .select("*")
       .eq("user_id", user.id)
       .gte("start_time", since)
-      .order("start_time", { ascending: true })
-      .then((r) => r.data ?? []),
-    serviceClient
-      .from("strava_activities")
-      .select("*")
-      .eq("user_id", user.id)
-      .gte("start_date", since)
-      .order("start_date", { ascending: true })
-      .then((r) => r.data ?? []),
+      .order("start_time", { ascending: true }),
+    activitiesQuery(),
     serviceClient
       .from("user_settings")
       .select("*")
       .eq("user_id", user.id)
-      .single()
-      .then((r) => r.data),
+      .maybeSingle(),
     serviceClient
       .from("morning_checkins")
       .select("*")
       .eq("user_id", user.id)
       .eq("date", today)
-      .maybeSingle()
-      .then((r) => r.data),
+      .maybeSingle(),
+    serviceClient
+      .from("oauth_connections")
+      .select("provider, status, last_synced_at")
+      .eq("user_id", user.id),
   ]);
+
+  const queryError = [recoveries, sleepRecords, activities, settings, checkIn, connections].find((result) => result.error)?.error;
+  if (queryError) {
+    console.error("[recommendation] Could not read inputs:", queryError);
+    return NextResponse.json({ error: "Could not read recommendation inputs" }, { status: 503 });
+  }
 
   // Normalize a 28-day window. The same normalized series drives the
   // recommendation, dashboard history, and personal baseline context.
-  const now = new Date();
   const dailyMetricsRows = Array.from({ length: 28 }, (_, index) => {
     const daysAgo = 27 - index;
     const targetDate = new Date(now);
@@ -68,11 +85,11 @@ export async function POST(request: NextRequest) {
     return normalizeDailyMetrics({
       userId: user.id,
       targetDate,
-      recoveries: recoveries as any,
-      sleepRecords: sleepRecords as any,
-      activities: activities as any,
-      hiitHrThreshold: settings?.hiit_threshold_hr ?? 165,
-      longSessionMinutes: settings?.long_session_minutes ?? 75,
+      recoveries: recoveries.data ?? [],
+      sleepRecords: sleepRecords.data ?? [],
+      activities: activities.data ?? [],
+      hiitHrThreshold: settings.data?.hiit_threshold_hr ?? 165,
+      longSessionMinutes: settings.data?.long_session_minutes ?? 75,
     });
   });
   const metrics = dailyMetricsRows[dailyMetricsRows.length - 1];
@@ -99,19 +116,25 @@ export async function POST(request: NextRequest) {
     return sorted.length % 2 ? sorted[center] : (sorted[center - 1] + sorted[center]) / 2;
   };
   const baseline = {
-    valid_days: historical.filter((row) => row.recovery_score != null || row.sleep_hours != null || row.load_7d != null).length,
+    valid_days: historical.filter((row) => row.recovery_score != null && row.sleep_hours != null).length,
     recovery_median: median(historical.map((row) => row.recovery_score).filter((value): value is number => value != null)),
     load_7d_median: median(historical.map((row) => row.load_7d).filter((value): value is number => value != null)),
+  };
+  const providerRows = (connections.data ?? []) as Pick<OAuthConnection, "provider" | "status" | "last_synced_at">[];
+  const providerConnections = {
+    whoop: providerRows.find((connection) => connection.provider === "whoop"),
+    strava: providerRows.find((connection) => connection.provider === "strava"),
   };
   const recommendation = buildRecommendation({
     metrics,
     baseline,
-    checkIn: (checkIn as MorningCheckIn | null) ?? null,
-    trainingMode: settings?.training_mode ?? "mixed",
+    checkIn: checkIn.data as MorningCheckIn | null,
+    inputGaps: readinessInputGaps(metrics, providerConnections, now),
+    trainingMode: settings.data?.training_mode ?? "mixed",
   });
 
   // Upsert recommendation row
-  const { data: recRow } = await serviceClient
+  const { data: recRow, error: recError } = await serviceClient
     .from("recommendations")
     .upsert(
       {
@@ -131,11 +154,16 @@ export async function POST(request: NextRequest) {
     .select()
     .single();
 
+  if (recError) {
+    console.error("[recommendation] Could not save recommendation:", recError);
+    return NextResponse.json({ error: "Could not save recommendation" }, { status: 500 });
+  }
+
   // Generate deterministic explanation
   const explanation = generateExplanation(recommendation);
 
   if (recRow) {
-    await serviceClient.from("recommendation_explanations").upsert(
+    const { error: explanationError } = await serviceClient.from("recommendation_explanations").upsert(
       {
         recommendation_id: recRow.id,
         plain_language_summary: explanation.summary,
@@ -144,6 +172,10 @@ export async function POST(request: NextRequest) {
       },
       { onConflict: "recommendation_id" }
     );
+    if (explanationError) {
+      console.error("[recommendation] Could not save explanation:", explanationError);
+      return NextResponse.json({ error: "Could not save recommendation explanation" }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ recommendation, explanation, metrics, baseline });

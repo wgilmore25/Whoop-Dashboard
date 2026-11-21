@@ -4,6 +4,8 @@
 
 import type { DailyMetrics, MetricConfidence, MorningCheckIn, Recommendation, TrainingMode } from "@/lib/types";
 
+export const RECOMMENDATION_RULE_VERSION = "ts-v3-data-confidence";
+
 export interface BaselineContext {
   valid_days: number;
   recovery_median: number | null;
@@ -15,6 +17,7 @@ export interface RecommendationInput {
   baseline: BaselineContext;
   checkIn?: MorningCheckIn | null;
   trainingMode?: TrainingMode;
+  inputGaps?: string[];
 }
 
 type State = "suppressed" | "typical" | "elevated";
@@ -22,7 +25,9 @@ type State = "suppressed" | "typical" | "elevated";
 function confidenceLabel(metrics: DailyMetrics, baseline: BaselineContext, checkIn?: MorningCheckIn | null): MetricConfidence {
   const wearableSignals = [metrics.recovery_score, metrics.sleep_hours, metrics.load_7d].filter((v) => v != null).length;
   if (wearableSignals < 2 || baseline.valid_days < 7) return "insufficient";
-  if (baseline.valid_days < 21 || metrics.hrv_cv_confidence === "insufficient" || !checkIn) return "moderate";
+  if (baseline.valid_days < 21 || metrics.hrv_cv_confidence == null ||
+    metrics.hrv_cv_confidence === "insufficient" || metrics.sleep_vs_baseline_pct == null ||
+    metrics.load_7d == null || !checkIn) return "moderate";
   return "high";
 }
 
@@ -51,7 +56,6 @@ function systemicState(metrics: DailyMetrics, baseline: BaselineContext, checkIn
 }
 
 function loadState(metrics: DailyMetrics, baseline: BaselineContext): { state: "underloaded" | "appropriate" | "elevated" | "spike"; reasons: string[] } {
-  const reasons: string[] = [];
   if (metrics.load_7d == null || baseline.load_7d_median == null || baseline.valid_days < 21) {
     return { state: "appropriate", reasons: ["load history is still building, so workload is interpreted cautiously"] };
   }
@@ -63,10 +67,10 @@ function loadState(metrics: DailyMetrics, baseline: BaselineContext): { state: "
 }
 
 export function buildRecommendation(input: RecommendationInput): Recommendation {
-  const { metrics, baseline, checkIn, trainingMode = "mixed" } = input;
+  const { metrics, baseline, checkIn, trainingMode = "mixed", inputGaps = [] } = input;
   const systemic = systemicState(metrics, baseline, checkIn);
   const load = loadState(metrics, baseline);
-  const dataConfidence = confidenceLabel(metrics, baseline, checkIn);
+  const dataConfidence = inputGaps.length ? "insufficient" : confidenceLabel(metrics, baseline, checkIn);
   let session: Recommendation["recommended_session"] = "zone2";
   let intensity = "easy to moderate";
   let duration: [number, number] = [30, 60];
@@ -77,11 +81,16 @@ export function buildRecommendation(input: RecommendationInput): Recommendation 
     intensity = "easy";
     duration = [0, session === "off" ? 0 : 30];
     strengthAllowed = false;
+  } else if (dataConfidence === "insufficient") {
+    session = "recovery";
+    intensity = "easy";
+    duration = [0, 30];
+    strengthAllowed = false;
   } else if (load.state === "spike") {
     session = "recovery";
     intensity = "easy";
     duration = [20, 45];
-  } else if (systemic.state === "elevated" && load.state === "appropriate") {
+  } else if (dataConfidence === "high" && systemic.state === "elevated" && load.state === "appropriate") {
     session = checkIn?.planned_session && ["tempo", "high_intensity", "strength_only"].includes(checkIn.planned_session)
       ? checkIn.planned_session : "tempo";
     intensity = session === "high_intensity" ? "quality, controlled" : "moderate to hard";
@@ -92,7 +101,12 @@ export function buildRecommendation(input: RecommendationInput): Recommendation 
     duration = [30, 60];
   }
 
-  const readiness_bucket = systemic.state === "suppressed" ? "low" : systemic.state === "elevated" ? "high" : "moderate";
-  const why = [...systemic.reasons, ...load.reasons, `data confidence: ${dataConfidence}`];
-  return { readiness_bucket, recommended_session: session, intensity_cap: intensity, duration_min_low: duration[0], duration_min_high: duration[1], strength_allowed: strengthAllowed, confidence: dataConfidence === "high" ? 0.8 : dataConfidence === "moderate" ? 0.6 : 0.35, rule_version: "ts-v2-personal-baseline", why };
+  const readiness_bucket = systemic.state === "suppressed" ? "low" : systemic.state === "elevated" && dataConfidence === "high" ? "high" : "moderate";
+  const why = [
+    ...(inputGaps.length && systemic.state !== "suppressed" ? [] : systemic.reasons),
+    ...(inputGaps.length ? [] : load.reasons),
+    ...inputGaps,
+    `data confidence: ${dataConfidence}`,
+  ];
+  return { readiness_bucket, recommended_session: session, intensity_cap: intensity, duration_min_low: duration[0], duration_min_high: duration[1], strength_allowed: strengthAllowed, confidence: dataConfidence === "high" ? 0.8 : dataConfidence === "moderate" ? 0.6 : 0.35, rule_version: RECOMMENDATION_RULE_VERSION, why };
 }
