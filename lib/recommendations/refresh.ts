@@ -123,6 +123,7 @@ export async function refreshRecommendation(userId: string, now = new Date()) {
 
   const decisionContext: DecisionContext = {
     plan: recommendation.plan ?? null,
+    movement_note: recommendation.movement_note ?? null,
     why: recommendation.why,
     check_in_updated_at: morningCheckIn?.updated_at ?? null,
     evaluated_at: now.toISOString(),

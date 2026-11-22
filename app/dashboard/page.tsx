@@ -168,6 +168,7 @@ async function getDashboardDataLive(): Promise<DashboardState> {
         confidence: recRow.confidence ?? 0.35,
         rule_version: recRow.rule_version,
         plan: context.plan,
+        movement_note: context.movement_note ?? null,
         why: context.why,
       }
     : null;

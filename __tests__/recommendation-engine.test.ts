@@ -107,3 +107,72 @@ describe("planned session decisions", () => {
     expect(hard.recommended_session).toBe("recovery");
   });
 });
+
+describe("reported movement limitations", () => {
+  const metrics = {
+    ...mockTodayMetrics, recovery_score: 87, sleep_vs_baseline_pct: 2,
+    hrv_vs_baseline_pct: 0, resting_hr_vs_baseline_pct: 0, load_7d_vs_baseline_pct: 3,
+  };
+  const cyclingLimit: MorningCheckIn = {
+    user_id: "u", date: metrics.date, fatigue: 1, soreness: 1, stress: 1, motivation: 4,
+    illness_symptoms: false, pain_or_injury: true, travel_or_jet_lag: false,
+    planned_session: "strength_only", planned_movement: "upper_body_strength",
+    limited_movements: ["cycling"], pain_region: "knee",
+  };
+
+  test("keeps upper-body strength when knee pain is reported to limit cycling", () => {
+    const decision = buildRecommendation({ metrics, baseline, checkIn: cyclingLimit });
+    expect(decision.plan?.action).toBe("keep");
+    expect(decision.plan?.planned_movement).toBe("upper_body_strength");
+    expect(decision.recommended_session).toBe("strength_only");
+    expect(decision.readiness_bucket).toBe("high");
+    expect(decision.movement_note).toContain("knee");
+    expect(decision.movement_note).toContain("cycling");
+  });
+
+  test("moves an affected cycling workout without lowering systemic readiness", () => {
+    const decision = buildRecommendation({
+      metrics, baseline, checkIn: { ...cyclingLimit, planned_session: "tempo", planned_movement: "cycling" },
+    });
+    expect(decision.plan?.action).toBe("move");
+    expect(decision.plan?.reason).toContain("marked cycling as limited");
+    expect(decision.recommended_session).toBe("off");
+    expect(decision.readiness_bucket).toBe("high");
+  });
+
+  test("detects a lower-body restriction in a full-body strength session", () => {
+    const decision = buildRecommendation({
+      metrics, baseline, checkIn: {
+        ...cyclingLimit, planned_movement: "full_body_strength", limited_movements: ["running", "lower_body_strength"],
+      },
+    });
+    expect(decision.plan?.reason).toContain("lower-body strength");
+    expect(decision.recommended_session).toBe("off");
+  });
+
+  test("holds a legacy pain-only check-in and an unspecified planned movement", () => {
+    for (const override of [{ limited_movements: undefined }, { planned_movement: null }, { planned_movement: "other" as const }]) {
+      const decision = buildRecommendation({ metrics, baseline, checkIn: { ...cyclingLimit, ...override } });
+      expect(decision.plan?.action).toBe("move");
+      expect(decision.recommended_session).toBe("off");
+    }
+  });
+
+  test("preserves planned rest independently of the movement details", () => {
+    const decision = buildRecommendation({
+      metrics, baseline, checkIn: { ...cyclingLimit, planned_session: "off", planned_movement: null },
+    });
+    expect(decision.plan?.action).toBe("keep");
+    expect(decision.recommended_session).toBe("off");
+  });
+
+  test("keeps the illness override and the insufficient-data policy", () => {
+    const illness = buildRecommendation({ metrics, baseline, checkIn: { ...cyclingLimit, illness_symptoms: true } });
+    const stale = buildRecommendation({ metrics, baseline, checkIn: cyclingLimit, inputGaps: ["Stale WHOOP"] });
+    expect(illness.recommended_session).toBe("off");
+    expect(illness.plan?.reason).toContain("illness");
+    expect(illness.readiness_bucket).toBe("low");
+    expect(stale.recommended_session).toBe("recovery");
+    expect(stale.confidence).toBe(0.35);
+  });
+});
