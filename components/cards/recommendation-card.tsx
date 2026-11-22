@@ -13,6 +13,8 @@ export function RecommendationCard({ recommendation: rec }: Props) {
   const sessionColor = SESSION_COLORS[rec.recommended_session];
   const readinessLabel = READINESS_LABELS[rec.readiness_bucket];
   const readinessColor = READINESS_COLORS[rec.readiness_bucket];
+  const plan = rec.plan;
+  const actionLabel = plan ? { keep: "Keep", modify: "Modify", move: "Move to another day" }[plan.action] : null;
   const dataConfidence = rec.confidence >= 0.75 ? "high" : rec.confidence >= 0.5 ? "moderate" : "low";
 
   return (
@@ -33,7 +35,7 @@ export function RecommendationCard({ recommendation: rec }: Props) {
             className="text-2xl font-bold"
             style={{ color: sessionColor }}
           >
-            {sessionLabel}
+            {actionLabel ?? sessionLabel}
           </span>
           <Badge
             style={{
@@ -45,9 +47,17 @@ export function RecommendationCard({ recommendation: rec }: Props) {
           </Badge>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 pt-1">
+        {plan && (
+          <div className="space-y-1 text-sm">
+            <p>Planned <strong>{SESSION_LABELS[plan.planned_session]}</strong></p>
+            <p>{plan.reason}</p>
+            {plan.action !== "keep" && <p>Today’s alternative <strong>{sessionLabel}</strong></p>}
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-3 pt-1">
           {rec.duration_min_low != null && rec.duration_min_high != null && (
-            <div className="text-center p-2 rounded-lg bg-secondary">
+            <div className="text-center p-2 rounded-lg bg-secondary min-w-24">
               <p className="text-xs text-muted-foreground">Duration</p>
               <p className="font-semibold text-sm">
                 {rec.duration_min_low}–{rec.duration_min_high} min
@@ -55,19 +65,21 @@ export function RecommendationCard({ recommendation: rec }: Props) {
             </div>
           )}
           {rec.intensity_cap && (
-            <div className="text-center p-2 rounded-lg bg-secondary">
+            <div className="text-center p-2 rounded-lg bg-secondary min-w-24">
               <p className="text-xs text-muted-foreground">Intensity cap</p>
               <p className="font-semibold text-sm capitalize">
                 {rec.intensity_cap}
               </p>
             </div>
           )}
-          <div className="text-center p-2 rounded-lg bg-secondary">
-            <p className="text-xs text-muted-foreground">Strength</p>
-            <p className="font-semibold text-sm">
-              {rec.strength_allowed ? "✓ OK" : "✗ Limit"}
-            </p>
-          </div>
+          {!plan && rec.recommended_session !== "off" && (
+            <div className="text-center p-2 rounded-lg bg-secondary min-w-24">
+              <p className="text-xs text-muted-foreground">Strength</p>
+              <p className="font-semibold text-sm">
+                {rec.strength_allowed ? "✓ OK" : "✗ Limit"}
+              </p>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

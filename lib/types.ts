@@ -14,7 +14,21 @@ export type SessionCategory =
   | "high_intensity"
   | "strength_only";
 
+export interface PlanDecision {
+  planned_session: SessionCategory;
+  action: "keep" | "modify" | "move";
+  reason: string;
+}
+
+export interface DecisionContext {
+  plan: PlanDecision | null;
+  why: string[];
+  evaluated_at: string;
+  check_in_updated_at: string | null;
+}
+
 export interface Recommendation {
+  plan?: PlanDecision | null;
   readiness_bucket: ReadinessBucket;
   recommended_session: SessionCategory;
   intensity_cap: string | null;
@@ -221,6 +235,7 @@ export interface MorningCheckIn {
   travel_or_jet_lag: boolean;
   planned_session: SessionCategory | null;
   notes?: string | null;
+  updated_at?: string | null;
 }
 
 export interface RecommendationOutcome {

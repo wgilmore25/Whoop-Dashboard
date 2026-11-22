@@ -9,7 +9,7 @@ A coach-grade personal dashboard that ingests WHOOP and Strava data, normalizes 
 1. **Connects** to WHOOP and Strava via OAuth 2.0
 2. **Syncs** recent recovery, sleep, cycles, and activity data
 3. **Normalizes** raw data into one `daily_metrics` row per day (rolling baselines, load proxies, flags)
-4. **Computes** a deterministic training recommendation (zone2, tempo, high_intensity, etc.) via a Python FastAPI microservice
+4. **Computes** a deterministic, plan-aware recommendation in the Next.js backend
 5. **Explains** the recommendation in plain language — no LLM required
 6. **Displays** everything in a clean dashboard with trend charts
 
@@ -157,7 +157,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-The Next.js API route at `/api/recommendation` calls this service. If it's unavailable, it falls back gracefully.
+The dashboard and the morning check-in use the TypeScript engine in `lib/recommendations/engine.ts`. The Python service contains the original engine.
 
 ---
 
@@ -193,7 +193,7 @@ Required scopes: `read,activity:read_all`
    ```
    supabase/migrations/001_initial_schema.sql
    supabase/migrations/002_rls_policies.sql
-   # Continue through every later numbered migration, including 007.
+   # Continue through every later numbered migration, including 011.
    ```
 4. Create a user via Supabase Auth → Authentication → Users → Add user
 
@@ -251,7 +251,11 @@ This is intentionally simple and explainable. The proxy is documented in `lib/sy
 
 ---
 
-## Recommendation engine rules
+## Plan-aware training recommendation
+
+Save a planned session in the dashboard’s morning check-in to evaluate it immediately using the latest stored data. The dashboard shows **Keep**, **Modify**, or **Move**, with the reason and one alternative when applicable. Moving a session leaves rescheduling to the athlete. Run migration `011_recommendation_decision_context.sql` before deploying this feature.
+
+## Original Python rules
 
 | Rule | Condition | Output |
 |---|---|---|

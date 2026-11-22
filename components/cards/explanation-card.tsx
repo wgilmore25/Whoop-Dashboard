@@ -4,9 +4,10 @@ import type { RecommendationExplanation } from "@/lib/types";
 
 interface Props {
   explanation: RecommendationExplanation;
+  showSummary?: boolean;
 }
 
-export function ExplanationCard({ explanation }: Props) {
+export function ExplanationCard({ explanation, showSummary = true }: Props) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -18,7 +19,7 @@ export function ExplanationCard({ explanation }: Props) {
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-sm leading-relaxed">{explanation.summary}</p>
+        {showSummary && <p className="text-sm leading-relaxed">{explanation.summary}</p>}
         <ul className="space-y-1.5">
           {explanation.bullets.map((bullet, i) => (
             <li key={i} className="flex gap-2 text-sm text-muted-foreground">

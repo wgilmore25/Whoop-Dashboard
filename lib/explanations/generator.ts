@@ -26,6 +26,18 @@ const SESSION_LABELS: Record<SessionCategory, string> = {
 
 function buildSummary(rec: Recommendation): string {
   const sessionLabel = SESSION_LABELS[rec.recommended_session];
+  if (rec.plan) {
+    const plannedLabel = SESSION_LABELS[rec.plan.planned_session];
+    if (rec.plan.action === "keep") return `Keep ${plannedLabel} as planned.`;
+    if (rec.plan.action === "modify") return `Swap ${plannedLabel} for ${sessionLabel} today.`;
+    return `Move ${plannedLabel} to another day. Choose ${sessionLabel} today.`;
+  }
+
+  if (rec.rule_version.startsWith("ts-v4-")) {
+    if (rec.recommended_session === "off") return "Take a rest day based on your check-in.";
+    if (rec.recommended_session === "recovery") return "A light recovery session is today's suggested default.";
+    return "Without a planned session, the default suggestion is easy aerobic work.";
+  }
 
   if (rec.readiness_bucket === "low") {
     return (
@@ -61,6 +73,8 @@ function buildBullets(rec: Recommendation): string[] {
   for (const reason of rec.why.slice(0, 3)) {
     bullets.push(capitalize(reason) + ".");
   }
+
+  if (rec.plan || rec.rule_version.startsWith("ts-v4-")) return bullets;
 
   // Pad to exactly 3 bullets with fallbacks if why array is short
   if (bullets.length < 3) {
