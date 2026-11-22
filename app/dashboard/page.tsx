@@ -15,11 +15,13 @@ import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/config/env";
 import { mockDashboardData } from "@/lib/mock-data";
+import { generateExplanation } from "@/lib/explanations/generator";
 import { RECOMMENDATION_RULE_VERSION } from "@/lib/recommendations/engine";
 import { readinessInputGaps } from "@/lib/sync/freshness";
 import { isUsableOvernightSleep } from "@/lib/sync/normalization";
 import type {
   DashboardData,
+  DecisionContext,
   DailyMetrics,
   Recommendation,
   StravaActivity,
@@ -69,6 +71,7 @@ async function getDashboardDataLive(): Promise<DashboardState> {
     connRes,
     recoveryRes,
     sleepRes,
+    checkInRes,
   ] = await Promise.all([
     supabase
       .from("daily_metrics")
@@ -80,7 +83,7 @@ async function getDashboardDataLive(): Promise<DashboardState> {
       .maybeSingle(),
     supabase
       .from("recommendations")
-      .select("*, recommendation_explanations(*)")
+      .select("*")
       .eq("user_id", user.id)
       .gte("date", d14ago)
       .lte("date", today)
@@ -120,9 +123,15 @@ async function getDashboardDataLive(): Promise<DashboardState> {
       .eq("user_id", user.id)
       .gte("end_time", d30ago)
       .order("start_time", { ascending: true }),
+    supabase
+      .from("morning_checkins")
+      .select("updated_at")
+      .eq("user_id", user.id)
+      .eq("date", today)
+      .maybeSingle(),
   ]);
 
-  const queryError = [metricsRes, recRes, activitiesRes, trendMetRes, trendRecRes, connRes, recoveryRes, sleepRes]
+  const queryError = [metricsRes, recRes, activitiesRes, trendMetRes, trendRecRes, connRes, recoveryRes, sleepRes, checkInRes]
     .find((result) => result.error)?.error;
   if (queryError) throw queryError;
 
@@ -139,14 +148,16 @@ async function getDashboardDataLive(): Promise<DashboardState> {
   const metrics = metricsRes.data as DailyMetrics;
   const inputGaps = readinessInputGaps(metrics, connections, now);
   const recRow = recRes.data?.find((row) => row.date === today && row.rule_version === RECOMMENDATION_RULE_VERSION);
-  const expRow = recRow?.recommendation_explanations?.[0];
+  const context = recRow?.decision_context as DecisionContext | null | undefined;
   // If a new provider sync succeeded but normalization failed, the previous
   // recommendation used a different snapshot and should stay hidden.
-  const computedAt = Date.parse(metrics.computed_at ?? "");
+  const evaluatedAt = Date.parse(context?.evaluated_at ?? "");
+  const computedAt = Math.min(evaluatedAt, Date.parse(metrics.computed_at ?? ""));
+  const usesCurrentCheckIn = context?.check_in_updated_at === (checkInRes.data?.updated_at ?? null);
   const metricsAreCurrent = Object.values(connections).every((connection) =>
     !connection.last_synced_at || Date.parse(connection.last_synced_at) <= computedAt
   );
-  const recommendation: Recommendation | null = recRow && expRow && !inputGaps.length && metricsAreCurrent
+  const recommendation: Recommendation | null = recRow && context && usesCurrentCheckIn && !inputGaps.length && metricsAreCurrent
     ? {
         readiness_bucket: recRow.readiness_bucket,
         recommended_session: recRow.recommended_session,
@@ -156,12 +167,11 @@ async function getDashboardDataLive(): Promise<DashboardState> {
         strength_allowed: recRow.strength_allowed ?? false,
         confidence: recRow.confidence ?? 0.35,
         rule_version: recRow.rule_version,
-        why: [],
+        plan: context.plan,
+        why: context.why,
       }
     : null;
-  const explanation = recommendation && expRow
-    ? { summary: expRow.plain_language_summary, bullets: expRow.bullets_json as string[] }
-    : null;
+  const explanation = recommendation ? generateExplanation(recommendation) : null;
 
   const recentActivities = (activitiesRes.data ?? []) as unknown as StravaActivity[];
 
@@ -343,6 +353,7 @@ export default async function DashboardPage() {
             <>
               <p className="text-muted-foreground">No live metrics yet. <Link href="/connect" className="underline">Connect a provider</Link> and sync to get started.</p>
               <SyncStatus connections={state.connections} now={new Date().toISOString()} />
+              <MorningCheckIn />
             </>
           ) : (
             <p role="status" className="text-muted-foreground">Live data is unavailable. Refresh the page to try again.</p>
@@ -395,24 +406,25 @@ export default async function DashboardPage() {
           <LoadCard metrics={metrics} window={7} details={loadDetails} />
         </div>
 
+        {state.kind === "live" && <MorningCheckIn />}
+
         {/* Middle row — recommendation */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-1">
             {recommendation ? <RecommendationCard recommendation={recommendation} /> : (
               <div className="rounded-xl border bg-card p-4">
                 <h2 className="font-medium">Recommendation unavailable</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Sync to generate guidance from current inputs.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Check the data status above. Save your check-in or sync again to update guidance.</p>
               </div>
             )}
           </div>
           <div className="lg:col-span-1">
-            {explanation && <ExplanationCard explanation={explanation} />}
+            {explanation && <ExplanationCard explanation={explanation} showSummary={!recommendation?.plan} />}
           </div>
           <div className="lg:col-span-1">
             <RecentSessionsCard activities={recentActivities} />
           </div>
         </div>
-        {state.kind === "live" && <MorningCheckIn />}
 
         {/* Bottom row — charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

@@ -2,9 +2,9 @@
 // It runs inside Next.js so the interpretation never changes when an optional
 // local Python process is unavailable. Its output is intentionally traceable.
 
-import type { DailyMetrics, MetricConfidence, MorningCheckIn, Recommendation, TrainingMode } from "@/lib/types";
+import type { DailyMetrics, MetricConfidence, MorningCheckIn, PlanDecision, Recommendation, SessionCategory, TrainingMode } from "@/lib/types";
 
-export const RECOMMENDATION_RULE_VERSION = "ts-v3-data-confidence";
+export const RECOMMENDATION_RULE_VERSION = "ts-v4-planned-session";
 
 export interface BaselineContext {
   valid_days: number;
@@ -48,7 +48,7 @@ function systemicState(metrics: DailyMetrics, baseline: BaselineContext, checkIn
     return { state: "suppressed", reasons };
   }
   if (metrics.recovery_score != null && baseline.recovery_median != null && metrics.recovery_score >= baseline.recovery_median + 10 && (metrics.sleep_vs_baseline_pct ?? 0) >= -5) {
-    reasons.push("recovery and sleep are above your recent typical range");
+    reasons.push("recovery is above your baseline and sleep is near or above its baseline");
     return { state: "elevated", reasons };
   }
   reasons.push("systemic recovery is within your recent typical range");
@@ -68,45 +68,81 @@ function loadState(metrics: DailyMetrics, baseline: BaselineContext): { state: "
 
 export function buildRecommendation(input: RecommendationInput): Recommendation {
   const { metrics, baseline, checkIn, trainingMode = "mixed", inputGaps = [] } = input;
+  const planned = checkIn?.planned_session ?? null;
   const systemic = systemicState(metrics, baseline, checkIn);
   const load = loadState(metrics, baseline);
   const dataConfidence = inputGaps.length ? "insufficient" : confidenceLabel(metrics, baseline, checkIn);
-  let session: Recommendation["recommended_session"] = "zone2";
-  let intensity = "easy to moderate";
-  let duration: [number, number] = [30, 60];
-  let strengthAllowed = true;
+  const mustRest = checkIn?.illness_symptoms || checkIn?.pain_or_injury;
 
-  if (systemic.state === "suppressed") {
-    session = checkIn?.illness_symptoms || checkIn?.pain_or_injury ? "off" : "recovery";
-    intensity = "easy";
-    duration = [0, session === "off" ? 0 : 30];
-    strengthAllowed = false;
-  } else if (dataConfidence === "insufficient") {
+  let session: SessionCategory = "zone2";
+  let planReason: string | null = null;
+
+  if (planned === "off") {
+    session = "off";
+    planReason = "Rest is part of your training plan.";
+  } else if (mustRest) {
+    session = "off";
+    planReason = checkIn.illness_symptoms ? "You reported illness symptoms." : "You reported pain or injury.";
+  } else if (planned === "recovery") {
     session = "recovery";
-    intensity = "easy";
-    duration = [0, 30];
-    strengthAllowed = false;
-  } else if (load.state === "spike") {
+    planReason = "You planned a light recovery session.";
+  } else if (systemic.state === "suppressed" || dataConfidence === "insufficient" || load.state === "spike") {
     session = "recovery";
-    intensity = "easy";
-    duration = [20, 45];
-  } else if (dataConfidence === "high" && systemic.state === "elevated" && load.state === "appropriate") {
-    session = checkIn?.planned_session && ["tempo", "high_intensity", "strength_only"].includes(checkIn.planned_session)
-      ? checkIn.planned_session : "tempo";
-    intensity = session === "high_intensity" ? "quality, controlled" : "moderate to hard";
-    duration = trainingMode === "endurance" ? [45, 75] : [35, 60];
-  } else if (load.state === "elevated") {
+    if (systemic.state === "suppressed") {
+      const reason = systemic.reasons[0];
+      planReason = reason.charAt(0).toUpperCase() + reason.slice(1) + ".";
+    } else if (dataConfidence === "insufficient") {
+      planReason = "There is too little current data or baseline history to assess the planned workload.";
+    } else {
+      planReason = "Your weekly workload is unusually high compared with your baseline.";
+    }
+  } else if (planned === "zone2") {
     session = "zone2";
-    intensity = "sub-threshold";
-    duration = [30, 60];
+    planReason = "Today's signals support an easy aerobic session.";
+  } else if (planned) {
+    if (load.state === "elevated") {
+      planReason = "Your weekly workload is rising above your usual range.";
+    } else if (dataConfidence !== "high") {
+      planReason = "Data confidence is too limited to support the planned intensity.";
+    } else if (systemic.state !== "elevated") {
+      planReason = "Recovery is within your usual range, and today's rules call for an easy session.";
+    } else if (load.state === "underloaded") {
+      planReason = "Your recent workload is below your usual range.";
+    } else {
+      session = planned;
+      planReason = "Recovery is above your baseline and recent workload is within your usual range.";
+    }
   }
 
-  const readiness_bucket = systemic.state === "suppressed" ? "low" : systemic.state === "elevated" && dataConfidence === "high" ? "high" : "moderate";
+  const plan: PlanDecision | null = planned && planReason ? {
+    planned_session: planned,
+    action: planned === session ? "keep"
+      : session === "off" || planned === "strength_only" || (session === "recovery" && planned !== "zone2")
+        ? "move" : "modify",
+    reason: planReason,
+  } : null;
+  const intensity = {
+    off: null, recovery: "easy", zone2: "easy, conversational",
+    tempo: "moderate to hard", high_intensity: "quality, controlled", strength_only: "controlled",
+  }[session];
+  const duration: [number | null, number | null] =
+    session === "off" || plan?.action === "keep" ? [null, null]
+      : session === "recovery" ? [0, 30]
+        : !planned || trainingMode === "endurance" ? [30, 60] : [20, 45];
+  const strengthAllowed = session === "strength_only" ||
+    (!planned && session === "zone2" && dataConfidence === "high" && load.state === "appropriate");
+  const readiness_bucket = systemic.state === "suppressed" ? "low"
+    : systemic.state === "elevated" && dataConfidence === "high" ? "high" : "moderate";
   const why = [
     ...(inputGaps.length && systemic.state !== "suppressed" ? [] : systemic.reasons),
     ...(inputGaps.length ? [] : load.reasons),
     ...inputGaps,
     `data confidence: ${dataConfidence}`,
   ];
-  return { readiness_bucket, recommended_session: session, intensity_cap: intensity, duration_min_low: duration[0], duration_min_high: duration[1], strength_allowed: strengthAllowed, confidence: dataConfidence === "high" ? 0.8 : dataConfidence === "moderate" ? 0.6 : 0.35, rule_version: RECOMMENDATION_RULE_VERSION, why };
+  return {
+    plan, readiness_bucket, recommended_session: session, intensity_cap: intensity,
+    duration_min_low: duration[0], duration_min_high: duration[1], strength_allowed: strengthAllowed,
+    confidence: dataConfidence === "high" ? 0.8 : dataConfidence === "moderate" ? 0.6 : 0.35,
+    rule_version: RECOMMENDATION_RULE_VERSION, why,
+  };
 }

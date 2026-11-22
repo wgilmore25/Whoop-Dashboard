@@ -141,6 +141,7 @@ export const mockTodayMetrics: DailyMetrics = {
 // confidence = 1.0 × 0.82 = 0.82. days_since_hiit=3 is not < HIIT_RECOVERY_MIN_DAYS(3),
 // so HIIT is not recent — strength_allowed=true (moderate bucket, no fatigue, no recent HIIT).
 export const mockRecommendation: Recommendation = {
+  plan: { planned_session: "tempo", action: "modify", reason: "Sleep was below your recent baseline and training load was elevated." },
   readiness_bucket: "moderate",
   recommended_session: "zone2",
   intensity_cap: "sub-threshold",
