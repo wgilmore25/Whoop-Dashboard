@@ -14,6 +14,31 @@ function sessionAge(days: number | null) {
   return days === 0 ? "today" : `${days}d ago`;
 }
 
+function AcwrScale({ ratio }: { ratio: number | null }) {
+  const value = ratio != null && Number.isFinite(ratio) && ratio >= 0 ? ratio : null;
+
+  return (
+    <div className="mt-3 space-y-2 border-t pt-3 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-muted-foreground">
+          ACWR <MetricInfo title="Acute-to-chronic workload ratio">Seven-day load divided by the average weekly load over the last 28 days. A value of 1.0 means those loads are equal. The gray band is a visual reference. The recommendation uses your personal load state.</MetricInfo>
+        </span>
+        <span className="font-semibold tabular-nums">{value == null ? "—" : value.toFixed(2)}</span>
+      </div>
+      <div className="relative h-2 rounded-full bg-secondary" aria-hidden="true">
+        <div className="absolute inset-y-0 left-[40%] w-[25%] bg-slate-300" />
+        {value != null && (
+          <div className="absolute inset-y-[-2px] w-1 -translate-x-1/2 rounded-full bg-foreground"
+            style={{ left: `${Math.min(value / 2, 1) * 100}%` }} />
+        )}
+      </div>
+      <div className="flex justify-between text-muted-foreground" aria-hidden="true">
+        <span>0</span><span>0.8–1.3</span><span>2.0+</span>
+      </div>
+    </div>
+  );
+}
+
 export function LoadCard({ metrics, window, details }: Props) {
   const load = window === 3 ? metrics.load_3d : metrics.load_7d;
   const loadLabel = metrics.load_method === "power_kj" || metrics.load_method === "power_estimate" ? "kJ" : "load points";
@@ -48,9 +73,10 @@ export function LoadCard({ metrics, window, details }: Props) {
           <div className="mt-3 border-t pt-3 text-xs">
             <div className="flex justify-between"><span className="text-muted-foreground">Personal load state <MetricInfo title="Personal load state">Your current 7-day load is compared with your own 28-day weekly median. Rising is more than 20% above typical; unusually high is more than 40%. This is context, not an injury-risk prediction.</MetricInfo></span><span className={`font-semibold ${statusColor}`}>{statusText}</span></div>
             <p className="mt-1 text-muted-foreground">{metrics.load_7d_vs_baseline_pct != null ? `${metrics.load_7d_vs_baseline_pct >= 0 ? "+" : ""}${Math.round(metrics.load_7d_vs_baseline_pct)}% vs personal 28-day weekly median` : "Need at least 3 prior weeks for a personal comparison."}</p>
-            <p className="mt-1 text-muted-foreground">Data confidence: {metrics.load_confidence ?? "insufficient"}. ACWR is retained as context, not a risk threshold.</p>
+            <p className="mt-1 text-muted-foreground">Data confidence: {metrics.load_confidence ?? "insufficient"}</p>
           </div>
         )}
+        {window === 7 && <AcwrScale ratio={metrics.acwr} />}
       </CardContent>
     </Card>
   );

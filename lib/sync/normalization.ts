@@ -465,13 +465,12 @@ export function normalizeDailyMetrics(input: NormalizationInput): DailyMetrics {
 
   // ── ACWR (Gabbett et al.) ─────────────────────────────────
   // acute (7d) / (chronic / 4) = acute / chronic_weekly_avg
-  // Target zone 0.8–1.3; danger >1.5
   const acwr =
     load7d != null && load28d != null && load28d > 0
       ? load7d / (load28d / 4)
       : null;
 
-  // ACWR is retained for history only. Workload interpretation uses the
+  // ACWR is displayed as context. Workload interpretation uses the
   // athlete's own weekly distribution, not a population-wide "sweet spot".
   const weeklyLoads: number[] = [];
   for (let offset = 0; offset < 4; offset++) {

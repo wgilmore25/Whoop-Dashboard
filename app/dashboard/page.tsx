@@ -400,7 +400,7 @@ export default async function DashboardPage() {
         )}
 
         {/* Top row — status cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <RecoveryCard metrics={metrics} details={recoveryDetails} />
           <SleepCard metrics={metrics} details={sleepDetails} />
           <LoadCard metrics={metrics} window={3} details={loadDetails} />

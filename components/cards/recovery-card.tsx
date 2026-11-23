@@ -1,19 +1,7 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MetricInfo } from "@/components/ui/metric-info";
 import type { DailyMetrics, RecoveryDetails } from "@/lib/types";
-
-function scoreToBucket(score: number): "low" | "moderate" | "high" {
-  if (score >= 67) return "high";
-  if (score >= 34) return "moderate";
-  return "low";
-}
-
-function ringColor(score: number): string {
-  if (score >= 67) return "#34d399"; // green
-  if (score >= 34) return "#f59e0b"; // amber
-  return "#f43f5e";                  // red
-}
 
 interface Props {
   metrics: DailyMetrics;
@@ -21,113 +9,99 @@ interface Props {
 }
 
 function TrendLine({ values }: { values: number[] }) {
-  if (values.length < 2) return null;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
   const points = values.map((value, index) => {
-    const x = (index / (values.length - 1)) * 140;
-    const y = 30 - ((value - min) / range) * 24;
+    const x = 2 + (index / (values.length - 1)) * 136;
+    const y = 30 - ((value - min) / range) * 26;
     return `${x},${y}`;
   }).join(" ");
-  return <svg viewBox="0 0 140 32" className="mt-1 h-8 w-full overflow-visible"><polyline fill="none" stroke="#34d399" strokeWidth="2" points={points} strokeLinecap="round" strokeLinejoin="round" /></svg>;
+
+  return (
+    <svg viewBox="0 0 140 34" preserveAspectRatio="none" className="h-9 w-full text-slate-500" aria-hidden="true">
+      <polyline fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" points={points} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function BaselineChange({ value }: { value: number | null }) {
+  if (value == null) return null;
+  const rounded = Math.round(value);
+
+  return <p className="text-xs text-muted-foreground">{rounded > 0 ? "+" : ""}{rounded}% vs baseline</p>;
 }
 
 export function RecoveryCard({ metrics, details }: Props) {
   const score = metrics.recovery_score;
-  const hasData = score != null;
-  const bucket = hasData ? scoreToBucket(score!) : null;
-
-  const circumference = 2 * Math.PI * 40; // r=40
-  const progress = hasData ? (score! / 100) * circumference : 0;
+  const band = score == null ? null : score >= 67
+    ? { label: "High", color: "#34d399", variant: "success" as const }
+    : score >= 34
+      ? { label: "Moderate", color: "#f59e0b", variant: "warning" as const }
+      : { label: "Low", color: "#f43f5e", variant: "danger" as const };
+  const circumference = 2 * Math.PI * 34;
+  const history = details?.hrv_history ?? [];
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Recovery <MetricInfo title="Recovery">WHOOP recovery score is displayed alongside HRV and resting-HR changes from your 14-day EWMA. A change is treated as meaningful only when it exceeds your individual 28-day SWC-style threshold, after 21 valid days.</MetricInfo>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          Recovery <MetricInfo title="Recovery">The ring shows your WHOOP recovery score. HRV and resting heart rate are compared with your personal 14-day baselines.</MetricInfo>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center gap-5">
-        {/* Circular progress ring */}
-        <div className="relative flex-shrink-0">
-          <svg width="96" height="96" className="-rotate-90">
-            <circle cx="48" cy="48" r="40" fill="none" stroke="#e5e7eb" strokeWidth="8" />
-            {hasData && (
-              <circle
-                cx="48" cy="48" r="40"
-                fill="none"
-                stroke={ringColor(score!)}
-                strokeWidth="8"
-                strokeDasharray={`${circumference}`}
-                strokeDashoffset={circumference - progress}
-                strokeLinecap="round"
-                style={{ transition: "stroke-dashoffset 0.6s ease" }}
-              />
-            )}
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-2xl font-bold">
-              {hasData ? Math.round(score!) : "—"}
-            </span>
+        <div className="flex min-h-16 items-center gap-3">
+          <div className="relative h-16 w-16 shrink-0">
+            <svg viewBox="0 0 80 80" className="h-full w-full -rotate-90" aria-hidden="true">
+              <circle cx="40" cy="40" r="34" fill="none" stroke="currentColor" strokeWidth="6" className="text-secondary" />
+              {score != null && band && (
+                <circle cx="40" cy="40" r="34" fill="none" stroke={band.color} strokeWidth="6" strokeLinecap="round"
+                  strokeDasharray={circumference} strokeDashoffset={circumference * (1 - Math.max(0, Math.min(score, 100)) / 100)} />
+              )}
+            </svg>
+            <span className="absolute inset-0 grid place-items-center text-xl font-bold tabular-nums">{score == null ? "—" : Math.round(score)}</span>
+          </div>
+          <div>
+            <p className="mb-1 text-xs text-muted-foreground">WHOOP recovery</p>
+            {band ? <Badge variant={band.variant}>{band.label}</Badge> : <p className="text-sm">No score yet</p>}
           </div>
         </div>
 
-        <div className="space-y-2">
-          {bucket && (
-            <Badge
-              variant={
-                bucket === "high"
-                  ? "success"
-                  : bucket === "moderate"
-                  ? "warning"
-                  : "danger"
-              }
-            >
-              {bucket.charAt(0).toUpperCase() + bucket.slice(1)} readiness
-            </Badge>
-          )}
-          {!hasData && (
-            <p className="text-xs text-muted-foreground">No data yet</p>
-          )}
-        </div>
-        </div>
+        <dl className="grid grid-cols-2 gap-3 border-t pt-3">
+          <div>
+            <dt className="text-xs text-muted-foreground">HRV</dt>
+            <dd className="text-base font-semibold tabular-nums">{details?.hrv?.toFixed(1) ?? "—"}{details?.hrv != null && " ms"}</dd>
+            <dd><BaselineChange value={metrics.hrv_vs_baseline_pct} /></dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Resting HR</dt>
+            <dd className="text-base font-semibold tabular-nums">{details?.resting_hr == null ? "—" : `${Math.round(details.resting_hr)} bpm`}</dd>
+            <dd><BaselineChange value={metrics.resting_hr_vs_baseline_pct} /></dd>
+          </div>
+        </dl>
 
-        {hasData && (
-          <div className="grid grid-cols-2 gap-3 border-t pt-3 text-xs">
-            <div>
-              <p className="text-muted-foreground">HRV (ms) <MetricInfo title="HRV change">Today&apos;s HRV is compared with your 14-day EWMA. SWC is 0.2 × your own 28-day SD, so small normal fluctuations do not automatically change training advice.</MetricInfo></p>
-              <p className="font-semibold text-foreground">{details?.hrv != null ? details.hrv.toFixed(1) : "—"} <span className="font-normal text-emerald-600">{metrics.hrv_vs_baseline_pct != null ? `${metrics.hrv_vs_baseline_pct > 0 ? "+" : ""}${Math.round(metrics.hrv_vs_baseline_pct)}%` : ""}</span></p>
+        {history.length > 1 && (
+          <div className="space-y-1 border-t pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs">
+              <span className="text-muted-foreground">HRV · last 14 days</span>
+              {metrics.hrv_trend && <span className="font-medium capitalize">{metrics.hrv_trend}</span>}
             </div>
-            <div>
-              <p className="text-muted-foreground">HRV trend</p>
-              <p className="font-semibold capitalize text-foreground">{metrics.hrv_trend ?? "—"}</p>
-              <p className="text-muted-foreground">14d EWMA {details?.hrv_ewma_14d != null ? `${details.hrv_ewma_14d.toFixed(1)} ms` : "—"}</p>
-              <p className="text-muted-foreground">SWC {metrics.hrv_swc_pct != null ? `±${metrics.hrv_swc_pct.toFixed(1)}%` : "building (21 days)"}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">HRV stability (7d CV)</p>
-              <p className="font-semibold text-foreground">
-                {details?.hrv_cv_7d != null ? `${details.hrv_cv_7d.toFixed(1)}%` : "Building"}
-              </p>
-              <p className="text-muted-foreground">
-                {details?.hrv_cv_valid_nights ?? 0}/7 nights · {details?.hrv_cv_confidence ?? "insufficient"} confidence
-              </p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Resting HR <MetricInfo title="Resting heart rate">A meaningful elevation is judged against your individual SWC-style threshold, not a fixed population-wide percentage.</MetricInfo></p>
-              <p className="font-semibold text-foreground">{details?.resting_hr != null ? `${Math.round(details.resting_hr)} bpm` : "—"} <span className="font-normal text-emerald-600">{metrics.resting_hr_vs_baseline_pct != null ? `${metrics.resting_hr_vs_baseline_pct > 0 ? "+" : ""}${Math.round(metrics.resting_hr_vs_baseline_pct)}%` : ""}</span></p>
-            </div>
+            <TrendLine values={history} />
           </div>
         )}
-        {details?.hrv_history && details.hrv_history.length > 1 && (
-          <div className="border-t pt-3 text-xs text-muted-foreground">
-            <div className="flex items-center justify-between"><span>HRV — 14-day EWMA trend</span><span className="font-medium text-emerald-600">{details.hrv?.toFixed(1)} ms now</span></div>
-            <p className="mt-0.5">Baseline: {details.hrv_baseline != null ? `${details.hrv_baseline.toFixed(1)} ms` : "building"}{metrics.hrv_vs_baseline_pct != null ? ` · ${metrics.hrv_vs_baseline_pct > 0 ? "+" : ""}${Math.round(metrics.hrv_vs_baseline_pct)}% vs baseline` : ""}</p>
-            <TrendLine values={details.hrv_history} />
-          </div>
-        )}
+
+        <details className="border-t pt-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer font-medium">HRV details</summary>
+          <dl className="mt-2 space-y-1">
+            <div className="flex justify-between gap-2"><dt>14-day baseline</dt><dd>{details?.hrv_baseline != null && Number.isFinite(details.hrv_baseline) ? `${details.hrv_baseline.toFixed(1)} ms` : "Building"}</dd></div>
+            <div className="flex justify-between gap-2"><dt>14-day EWMA</dt><dd>{details?.hrv_ewma_14d == null ? "—" : `${details.hrv_ewma_14d.toFixed(1)} ms`}</dd></div>
+            <div className="flex justify-between gap-2"><dt>Change threshold (SWC)</dt><dd>{metrics.hrv_swc_pct == null ? "Building" : `±${metrics.hrv_swc_pct.toFixed(1)}%`}</dd></div>
+            <div className="flex justify-between gap-2"><dt>7-night variability (CV)</dt><dd>{details?.hrv_cv_7d == null ? "Building" : `${details.hrv_cv_7d.toFixed(1)}%`}</dd></div>
+          </dl>
+          {details?.hrv_cv_valid_nights != null && (
+            <p className="mt-1">{details.hrv_cv_valid_nights}/7 nights · {details.hrv_cv_confidence ?? "insufficient"} confidence</p>
+          )}
+        </details>
       </CardContent>
     </Card>
   );
