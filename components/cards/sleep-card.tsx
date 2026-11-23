@@ -1,5 +1,4 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Moon } from "lucide-react";
 import { MetricInfo } from "@/components/ui/metric-info";
 import type { DailyMetrics, SleepDetails } from "@/lib/types";
 
@@ -11,70 +10,71 @@ interface Props {
 export function SleepCard({ metrics, details }: Props) {
   const hours = metrics.sleep_hours;
   const vsBaseline = metrics.sleep_vs_baseline_pct;
-
-  const color =
-    vsBaseline == null
-      ? "text-muted-foreground"
-      : vsBaseline >= -5
-      ? "text-emerald-600"
-      : vsBaseline >= -15
-      ? "text-amber-600"
-      : "text-rose-600";
+  const roundedChange = vsBaseline == null ? null : Math.round(vsBaseline);
+  const stages = [
+    { label: "Deep", minutes: details?.deep_minutes, color: "bg-indigo-600" },
+    { label: "REM", minutes: details?.rem_minutes, color: "bg-violet-400" },
+    { label: "Light", minutes: details?.light_minutes, color: "bg-blue-300" },
+    { label: "Awake", minutes: details?.awake_minutes, color: "bg-slate-300" },
+  ];
+  const totalMinutes = stages.reduce((total, stage) => total + (stage.minutes ?? 0), 0);
+  const hasContinuity = details?.disturbance_count != null || details?.longest_awake_minutes != null
+    || (details?.continuity_confidence != null && details.continuity_confidence !== "insufficient");
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Sleep <MetricInfo title="Sleep">Sleep duration is compared with your own 14-day pattern. The quality score combines duration, efficiency, total overnight awake time, the longest wake when available, and fragmentation; total awake time is weighted more than wake count.</MetricInfo>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          Sleep <MetricInfo title="Sleep">Duration is compared with your 14-day baseline. The quality score combines duration, efficiency and overnight continuity.</MetricInfo>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-end gap-2">
-          <Moon className="h-6 w-6 text-indigo-400 mb-1" />
-          <span className="text-3xl font-bold">
-            {hours != null ? hours.toFixed(1) : "—"}
-          </span>
-          <span className="text-muted-foreground mb-1">hrs</span>
+      <CardContent className="space-y-4">
+        <div className="flex min-h-16 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div>
+            <p className="text-3xl font-bold leading-none tabular-nums">
+              {hours == null ? "—" : hours.toFixed(1)}{hours != null && <span className="ml-1 text-sm font-normal text-muted-foreground">hrs</span>}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {roundedChange == null ? "Baseline building" : `${roundedChange > 0 ? "+" : ""}${roundedChange}% vs baseline`}
+            </p>
+          </div>
+          {metrics.sleep_quality_score != null && (
+            <div>
+              <p className="text-xs text-muted-foreground">Quality <MetricInfo title="Sleep quality score">An exploratory score from 0 to 10. It reflects duration, efficiency, awake time and interruptions.</MetricInfo></p>
+              <p className="text-base font-semibold tabular-nums">{metrics.sleep_quality_score.toFixed(1)} <span className="text-xs font-normal text-muted-foreground">/ 10</span></p>
+            </div>
+          )}
         </div>
 
-        {vsBaseline != null && (
-          <p className={`mt-1 text-sm font-medium ${color}`}>
-            {vsBaseline > 0 ? "+" : ""}
-            {Math.round(vsBaseline)}% vs 14-day baseline {metrics.sleep_swc_pct != null && `· SWC ±${metrics.sleep_swc_pct.toFixed(1)}%`}
-          </p>
-        )}
-        {vsBaseline == null && (
-          <p className="mt-1 text-sm text-muted-foreground">
-            Baseline not yet established
-          </p>
-        )}
-        {details && (details.deep_minutes != null || details.rem_minutes != null) && (
-          <>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-3 text-xs">
-              <div><p className="text-muted-foreground">Deep (SWS)</p><p className="font-semibold">{details.deep_minutes ?? "—"} min</p></div>
-              <div><p className="text-muted-foreground">REM</p><p className="font-semibold">{details.rem_minutes ?? "—"} min</p></div>
-              <div><p className="text-muted-foreground">Awake</p><p className="font-semibold">{details.awake_minutes ?? "—"} min</p></div>
-              <div><p className="text-muted-foreground">Quality score <MetricInfo title="Sleep quality score">A 0–10 exploratory composite. It is used as supporting context and is not allowed to prescribe training on its own.</MetricInfo></p><p className="font-semibold">{metrics.sleep_quality_score != null ? `${metrics.sleep_quality_score.toFixed(1)} / 10` : "—"}</p></div>
+        {totalMinutes > 0 && (
+          <div className="space-y-2 border-t pt-3">
+            <p className="text-xs font-medium text-muted-foreground">Sleep stages</p>
+            <div className="flex h-2 overflow-hidden rounded-full" aria-hidden="true">
+              {stages.map(({ label, minutes, color }) => (
+                <div key={label} className={color} style={{ width: `${((minutes ?? 0) / totalMinutes) * 100}%` }} />
+              ))}
             </div>
-            <div className="text-xs text-muted-foreground">
-              <p className="mb-1">Stage breakdown</p>
-              <div className="flex h-2 overflow-hidden rounded-full bg-secondary">
-                <span className="bg-indigo-600" style={{ width: `${Math.min(100, ((details.deep_minutes ?? 0) / Math.max(1, hours ? hours * 60 : 1)) * 100)}%` }} />
-                <span className="bg-violet-400" style={{ width: `${Math.min(100, ((details.rem_minutes ?? 0) / Math.max(1, hours ? hours * 60 : 1)) * 100)}%` }} />
-                <span className="bg-blue-200" style={{ width: `${Math.min(100, ((details.light_minutes ?? 0) / Math.max(1, hours ? hours * 60 : 1)) * 100)}%` }} />
-                <span className="bg-slate-300" style={{ width: `${Math.min(100, ((details.awake_minutes ?? 0) / Math.max(1, hours ? hours * 60 : 1)) * 100)}%` }} />
-              </div>
-              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]"><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-indigo-600" />Deep</span><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-violet-400" />REM</span><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-blue-200" />Light</span><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-slate-300" />Awake</span></div>
-              {(details.awake_minutes != null || details.disturbance_count != null) && (
-                <p className="mt-2">
-                  Continuity: {details.awake_minutes != null ? `${details.awake_minutes} min awake overnight` : "awake time unavailable"}
-                  {details.longest_awake_minutes != null && ` · longest wake ${Math.round(details.longest_awake_minutes)} min`}
-                  {details.disturbance_count != null && ` · ${details.disturbance_count} disruption${details.disturbance_count === 1 ? "" : "s"}`}
-                  {` · ${details.continuity_confidence} confidence`}
-                </p>
-              )}
-            </div>
-          </>
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+              {stages.map(({ label, minutes, color }) => (
+                <div key={label}>
+                  <dt className="flex items-center gap-1.5 text-muted-foreground"><span className={`h-2 w-2 shrink-0 rounded-full ${color}`} aria-hidden="true" />{label}</dt>
+                  <dd className="pl-3.5 font-semibold tabular-nums">{minutes == null ? "—" : `${minutes} min`}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        )}
+
+        {(hasContinuity || metrics.sleep_swc_pct != null) && (
+          <details className="border-t pt-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer font-medium">Sleep details</summary>
+            <dl className="mt-2 space-y-1">
+              {details?.disturbance_count != null && <div className="flex justify-between gap-2"><dt>Disruptions</dt><dd>{details.disturbance_count}</dd></div>}
+              {details?.longest_awake_minutes != null && <div className="flex justify-between gap-2"><dt>Longest wake</dt><dd>{Math.round(details.longest_awake_minutes)} min</dd></div>}
+              {details?.continuity_confidence && <div className="flex justify-between gap-2"><dt>Continuity confidence</dt><dd className="capitalize">{details.continuity_confidence}</dd></div>}
+              {metrics.sleep_swc_pct != null && <div className="flex justify-between gap-2"><dt>Change threshold (SWC)</dt><dd>±{metrics.sleep_swc_pct.toFixed(1)}%</dd></div>}
+            </dl>
+          </details>
         )}
       </CardContent>
     </Card>

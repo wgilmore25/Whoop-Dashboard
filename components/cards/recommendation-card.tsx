@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { MetricInfo } from "@/components/ui/metric-info";
 import { SESSION_LABELS, SESSION_COLORS, READINESS_LABELS, READINESS_COLORS } from "@/lib/utils";
+import { MOVEMENT_LABELS } from "@/lib/training-movements";
 import type { Recommendation } from "@/lib/types";
 
 interface Props {
@@ -43,17 +44,22 @@ export function RecommendationCard({ recommendation: rec }: Props) {
               color: readinessColor,
             }}
           >
-            {readinessLabel} readiness
+            {readinessLabel} systemic readiness
           </Badge>
         </div>
 
         {plan && (
           <div className="space-y-1 text-sm">
-            <p>Planned <strong>{SESSION_LABELS[plan.planned_session]}</strong></p>
+            <p>
+              Planned <strong>{SESSION_LABELS[plan.planned_session]}</strong>
+              {plan.planned_movement && <> · {MOVEMENT_LABELS[plan.planned_movement]}</>}
+            </p>
             <p>{plan.reason}</p>
             {plan.action !== "keep" && <p>Today’s alternative <strong>{sessionLabel}</strong></p>}
           </div>
         )}
+
+        {rec.movement_note && <p className="text-sm text-muted-foreground">{rec.movement_note}</p>}
 
         <div className="flex flex-wrap gap-3 pt-1">
           {rec.duration_min_low != null && rec.duration_min_high != null && (

@@ -193,7 +193,7 @@ Required scopes: `read,activity:read_all`
    ```
    supabase/migrations/001_initial_schema.sql
    supabase/migrations/002_rls_policies.sql
-   # Continue through every later numbered migration, including 011.
+   # Continue through every later numbered migration, including 012.
    ```
 4. Create a user via Supabase Auth → Authentication → Users → Add user
 
@@ -254,6 +254,10 @@ This is intentionally simple and explainable. The proxy is documented in `lib/sy
 ## Plan-aware training recommendation
 
 Save a planned session in the dashboard’s morning check-in to evaluate it immediately using the latest stored data. The dashboard shows **Keep**, **Modify**, or **Move**, with the reason and one alternative when applicable. Moving a session leaves rescheduling to the athlete. Run migration `011_recommendation_decision_context.sql` before deploying this feature.
+
+## Movement limitations
+
+If you report pain or injury in the morning check-in, select the movements it limits today and the movement in your planned session. You can optionally add a body region. The recommendation evaluates the reported movement restriction independently of whole-body readiness. A conflict or an unspecified limitation holds the affected plan. Apply migration `012_movement_limitations.sql` before deploying.
 
 ## Original Python rules
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refreshRecommendation } from "@/lib/recommendations/refresh";
+import { isPainRegion, isTrainingMovement } from "@/lib/training-movements";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -37,6 +38,20 @@ export async function PUT(request: NextRequest) {
   if (body.planned_session != null && !sessions.includes(body.planned_session)) {
     return NextResponse.json({ error: "Invalid planned session." }, { status: 400 });
   }
+  const { planned_movement, pain_region, limited_movements } = body;
+  if (planned_movement != null && !isTrainingMovement(planned_movement)) {
+    return NextResponse.json({ error: "Invalid planned movement." }, { status: 400 });
+  }
+  if (pain_region != null && !isPainRegion(pain_region)) {
+    return NextResponse.json({ error: "Invalid body region." }, { status: 400 });
+  }
+  if (limited_movements != null && (!Array.isArray(limited_movements) || !limited_movements.every(isTrainingMovement))) {
+    return NextResponse.json({ error: "Invalid movement limitations." }, { status: 400 });
+  }
+  if (body.pain_or_injury != null && typeof body.pain_or_injury !== "boolean") {
+    return NextResponse.json({ error: "Invalid pain or injury flag." }, { status: 400 });
+  }
+  const painReported = body.pain_or_injury === true;
   const savedAt = new Date();
   const { error } = await createServiceClient().from("morning_checkins").upsert({
     user_id: user.id,
@@ -46,9 +61,12 @@ export async function PUT(request: NextRequest) {
     stress: body.stress ?? null,
     motivation: body.motivation ?? null,
     illness_symptoms: Boolean(body.illness_symptoms),
-    pain_or_injury: Boolean(body.pain_or_injury),
+    pain_or_injury: painReported,
+    pain_region: painReported ? pain_region ?? null : null,
+    limited_movements: painReported ? Array.from(new Set(limited_movements ?? [])) : [],
     travel_or_jet_lag: Boolean(body.travel_or_jet_lag),
     planned_session: body.planned_session ?? null,
+    planned_movement: body.planned_session && body.planned_session !== "off" ? planned_movement ?? null : null,
     notes: typeof body.notes === "string" ? body.notes.slice(0, 1000) : null,
     updated_at: savedAt.toISOString(),
   }, { onConflict: "user_id,date" });

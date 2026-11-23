@@ -4,7 +4,9 @@
 
 import type { DailyMetrics, MetricConfidence, MorningCheckIn, PlanDecision, Recommendation, SessionCategory, TrainingMode } from "@/lib/types";
 
-export const RECOMMENDATION_RULE_VERSION = "ts-v4-planned-session";
+import { MOVEMENT_LABELS, PAIN_REGION_LABELS, movementsOverlap } from "@/lib/training-movements";
+
+export const RECOMMENDATION_RULE_VERSION = "ts-v5-movement-limitations";
 
 export interface BaselineContext {
   valid_days: number;
@@ -33,8 +35,8 @@ function confidenceLabel(metrics: DailyMetrics, baseline: BaselineContext, check
 
 function systemicState(metrics: DailyMetrics, baseline: BaselineContext, checkIn?: MorningCheckIn | null): { state: State; reasons: string[] } {
   const reasons: string[] = [];
-  if (checkIn?.illness_symptoms || checkIn?.pain_or_injury) {
-    reasons.push(checkIn.illness_symptoms ? "illness symptoms reported" : "pain or injury reported");
+  if (checkIn?.illness_symptoms) {
+    reasons.push("illness symptoms reported");
     return { state: "suppressed", reasons };
   }
   if ((checkIn?.fatigue ?? 0) >= 4 || (checkIn?.stress ?? 0) >= 4 || (checkIn?.soreness ?? 0) >= 4) {
@@ -66,13 +68,36 @@ function loadState(metrics: DailyMetrics, baseline: BaselineContext): { state: "
   return { state: "appropriate", reasons: ["weekly load is close to your personal typical range"] };
 }
 
+function movementConstraint(checkIn: MorningCheckIn | null | undefined) {
+  if (!checkIn?.pain_or_injury) return { note: null, blockReason: null };
+
+  const limited = checkIn.limited_movements ?? [];
+  const planned = checkIn.planned_session ? checkIn.planned_movement : null;
+  const region = checkIn.pain_region ? PAIN_REGION_LABELS[checkIn.pain_region] : null;
+  const scope = region ? `Pain or injury (${region.toLowerCase()})` : "Pain or injury";
+  const list = limited.map((movement) => MOVEMENT_LABELS[movement].toLowerCase()).join(", ");
+  const note = limited.length ? `${scope}. Reported limits include ${list}.` : `${scope} reported.`;
+
+  const matched = planned && limited.find((movement) => movementsOverlap(planned, movement));
+  if (matched) {
+    const affected = MOVEMENT_LABELS[matched].toLowerCase();
+    const reason = planned === matched ? `You marked ${affected} as limited today.`
+      : `Your plan overlaps with ${affected}, which you marked as limited today.`;
+    return { note, blockReason: reason };
+  }
+  if (!planned || !limited.length || planned === "other" || limited.includes("other")) {
+    return { note, blockReason: "Today’s plan needs a specific movement and a list of what pain limits before it can be assessed." };
+  }
+  return { note, blockReason: null };
+}
+
 export function buildRecommendation(input: RecommendationInput): Recommendation {
   const { metrics, baseline, checkIn, trainingMode = "mixed", inputGaps = [] } = input;
   const planned = checkIn?.planned_session ?? null;
   const systemic = systemicState(metrics, baseline, checkIn);
   const load = loadState(metrics, baseline);
   const dataConfidence = inputGaps.length ? "insufficient" : confidenceLabel(metrics, baseline, checkIn);
-  const mustRest = checkIn?.illness_symptoms || checkIn?.pain_or_injury;
+  const movement = movementConstraint(checkIn);
 
   let session: SessionCategory = "zone2";
   let planReason: string | null = null;
@@ -80,9 +105,9 @@ export function buildRecommendation(input: RecommendationInput): Recommendation 
   if (planned === "off") {
     session = "off";
     planReason = "Rest is part of your training plan.";
-  } else if (mustRest) {
+  } else if (checkIn?.illness_symptoms || movement.blockReason) {
     session = "off";
-    planReason = checkIn.illness_symptoms ? "You reported illness symptoms." : "You reported pain or injury.";
+    planReason = checkIn?.illness_symptoms ? "You reported illness symptoms." : movement.blockReason;
   } else if (planned === "recovery") {
     session = "recovery";
     planReason = "You planned a light recovery session.";
@@ -116,6 +141,7 @@ export function buildRecommendation(input: RecommendationInput): Recommendation 
 
   const plan: PlanDecision | null = planned && planReason ? {
     planned_session: planned,
+    planned_movement: planned !== "off" ? checkIn?.planned_movement ?? null : null,
     action: planned === session ? "keep"
       : session === "off" || planned === "strength_only" || (session === "recovery" && planned !== "zone2")
         ? "move" : "modify",
@@ -140,7 +166,7 @@ export function buildRecommendation(input: RecommendationInput): Recommendation 
     `data confidence: ${dataConfidence}`,
   ];
   return {
-    plan, readiness_bucket, recommended_session: session, intensity_cap: intensity,
+    plan, movement_note: movement.note, readiness_bucket, recommended_session: session, intensity_cap: intensity,
     duration_min_low: duration[0], duration_min_high: duration[1], strength_allowed: strengthAllowed,
     confidence: dataConfidence === "high" ? 0.8 : dataConfidence === "moderate" ? 0.6 : 0.35,
     rule_version: RECOMMENDATION_RULE_VERSION, why,

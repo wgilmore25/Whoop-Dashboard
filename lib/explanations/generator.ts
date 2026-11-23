@@ -33,7 +33,7 @@ function buildSummary(rec: Recommendation): string {
     return `Move ${plannedLabel} to another day. Choose ${sessionLabel} today.`;
   }
 
-  if (rec.rule_version.startsWith("ts-v4-")) {
+  if (rec.plan !== undefined) {
     if (rec.recommended_session === "off") return "Take a rest day based on your check-in.";
     if (rec.recommended_session === "recovery") return "A light recovery session is today's suggested default.";
     return "Without a planned session, the default suggestion is easy aerobic work.";
@@ -74,7 +74,7 @@ function buildBullets(rec: Recommendation): string[] {
     bullets.push(capitalize(reason) + ".");
   }
 
-  if (rec.plan || rec.rule_version.startsWith("ts-v4-")) return bullets;
+  if (rec.plan !== undefined) return bullets;
 
   // Pad to exactly 3 bullets with fallbacks if why array is short
   if (bullets.length < 3) {

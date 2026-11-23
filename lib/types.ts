@@ -2,6 +2,8 @@
 // Shared TypeScript types for the Training Readiness Dashboard
 // ============================================================
 
+import type { PainRegion, TrainingMovement } from "./training-movements";
+
 // ── Recommendation engine types ─────────────────────────────
 
 export type ReadinessBucket = "low" | "moderate" | "high";
@@ -16,12 +18,14 @@ export type SessionCategory =
 
 export interface PlanDecision {
   planned_session: SessionCategory;
+  planned_movement?: TrainingMovement | null;
   action: "keep" | "modify" | "move";
   reason: string;
 }
 
 export interface DecisionContext {
   plan: PlanDecision | null;
+  movement_note?: string | null;
   why: string[];
   evaluated_at: string;
   check_in_updated_at: string | null;
@@ -29,6 +33,7 @@ export interface DecisionContext {
 
 export interface Recommendation {
   plan?: PlanDecision | null;
+  movement_note?: string | null;
   readiness_bucket: ReadinessBucket;
   recommended_session: SessionCategory;
   intensity_cap: string | null;
@@ -234,6 +239,9 @@ export interface MorningCheckIn {
   pain_or_injury: boolean;
   travel_or_jet_lag: boolean;
   planned_session: SessionCategory | null;
+  planned_movement?: TrainingMovement | null;
+  pain_region?: PainRegion | null;
+  limited_movements?: TrainingMovement[];
   notes?: string | null;
   updated_at?: string | null;
 }
